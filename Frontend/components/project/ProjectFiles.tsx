@@ -407,6 +407,23 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
         }));
         setSelectedFileId(newSrtFiles[0].id);
 
+        // Process SRT token counts for generated files
+        for (const srtFile of newSrtFiles) {
+            try {
+                setProcessingStatus(prev => ({ ...prev, [srtFile.id]: 'Đang đếm token...' }));
+                const tokenCount = srtFile.originalSubtitles.length > 0
+                    ? await countTokensInText(formatForGemini(srtFile.originalSubtitles), project.model || 'gemini-2.5-flash', project)
+                    : 0;
+                onUpdateProject(project.id, p => ({
+                    files: p.files.map(f => f.id === srtFile.id ? { ...f, tokenCount } : f)
+                }));
+                setProcessingStatus(prev => { const s = {...prev}; delete s[srtFile.id]; return s; });
+            } catch (error) {
+                console.error(`Error counting tokens for ${srtFile.name}:`, error);
+                setProcessingStatus(prev => ({ ...prev, [srtFile.id]: 'Lỗi đếm token' }));
+            }
+        }
+
         const extraNotices: string[] = [];
         if (missingAudioSources > 0) {
             extraNotices.push(`${missingAudioSources} tệp chưa có nguồn âm thanh`);
