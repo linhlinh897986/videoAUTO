@@ -10,6 +10,13 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        /**
+         * Allow development access through dynamically generated public hosts such as
+         * the ngrok URLs used in Colab environments. This prevents Vite from blocking
+         * proxied requests with "host not allowed" errors when the frontend is exposed
+         * through a tunnel.
+         */
+        allowedHosts: true,
       },
       plugins: [react()],
       define: {
