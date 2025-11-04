@@ -341,12 +341,22 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
     try {
         const response = await generateMissingSrtsFromAsr(project.id);
         const generatedItems = (response.generated || []).filter(item => (item?.srt_content || '').trim().length > 0);
+        const missingAudioCount = (response.missing_sources || []).filter(item => item.reason === 'no-audio-source').length;
+        const mp3ErrorCount = (response.errors || []).filter(item => (item.error || '').toLowerCase().includes('mp3')).length;
 
         if (generatedItems.length === 0) {
-            const hasPendingVideos = (response.missing_sources?.length || 0) > 0;
-            const message = hasPendingVideos
-                ? 'Không tìm thấy dữ liệu ASR phù hợp cho các video chưa có phụ đề.'
-                : 'Tất cả video đã có phụ đề hoặc không có video nào cần tạo.';
+            if (missingAudioCount > 0) {
+                setClipboardMessage('Không tìm thấy tệp âm thanh MP3 cùng tên để gửi tới Bcut. Vui lòng tải lên file .mp3 trùng tên với video.');
+                return;
+            }
+            if (mp3ErrorCount > 0) {
+                setClipboardMessage('Các tệp âm thanh phải ở định dạng MP3 để dùng với Bcut. Hãy chuyển đổi và thử lại.');
+                return;
+            }
+            const hasPendingMedia = (response.missing_sources?.length || 0) > 0;
+            const message = hasPendingMedia
+                ? 'Không tìm thấy dữ liệu ASR phù hợp cho các tệp chưa có phụ đề.'
+                : 'Tất cả tệp đã có phụ đề hoặc không có tệp nào cần tạo.';
             setClipboardMessage(message);
             return;
         }
@@ -358,7 +368,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                 console.warn('Generated ASR subtitle is empty after parsing', item);
                 continue;
             }
-            const fallbackName = item.video_name ? item.video_name.replace(/\.[^/.]+$/, '') + '.srt' : `subtitle-${Date.now()}.srt`;
+            const fallbackName = item.file_name ? item.file_name.replace(/\.[^/.]+$/, '') + '.srt' : `subtitle-${Date.now()}.srt`;
             const fileName = item.srt_filename || fallbackName;
             const generatedId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
                 ? crypto.randomUUID()
@@ -383,13 +393,21 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
         setSelectedFileId(newSrtFiles[0].id);
 
         const extraNotices: string[] = [];
-        if ((response.missing_sources?.length || 0) > 0) {
-            extraNotices.push(`${response.missing_sources.length} video thiếu dữ liệu ASR`);
+        if (missingAudioCount > 0) {
+            extraNotices.push(`${missingAudioCount} tệp cần thêm audio MP3 cùng tên`);
         }
-        if ((response.errors?.length || 0) > 0) {
-            extraNotices.push(`${response.errors.length} lỗi khi chuyển đổi`);
+        const remainingMissing = (response.missing_sources?.length || 0) - missingAudioCount;
+        if (remainingMissing > 0) {
+            extraNotices.push(`${remainingMissing} tệp thiếu dữ liệu ASR`);
         }
-        const statusMessage = [`Đã thêm ${newSrtFiles.length} phụ đề từ ASR.`];
+        const errorCount = response.errors?.length || 0;
+        if (errorCount > 0) {
+            extraNotices.push(`${errorCount} lỗi khi chuyển đổi`);
+        }
+        if (mp3ErrorCount > 0 && !extraNotices.some(note => note.includes('MP3'))) {
+            extraNotices.push('Một số tệp cần đổi sang MP3');
+        }
+        const statusMessage = [`Đã thêm ${newSrtFiles.length} phụ đề từ ASR/Bcut.`];
         if (extraNotices.length > 0) {
             statusMessage.push(extraNotices.join('. '));
         }
@@ -546,6 +564,9 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                     {isGeneratingSrts ? <LoadingSpinner /> : <SubtitlesIcon className="w-5 h-5" />}
                     <span>Tạo SRT từ ASR</span>
                 </button>
+                <p className="text-xs text-amber-200/80 text-center">
+                    Bcut cần tệp âm thanh <span className="font-semibold">.mp3</span> trùng tên với video để tạo phụ đề.
+                </p>
                 <button onClick={handleDeleteAllFiles} disabled={project.files.length === 0} className="w-full bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2">
                     <TrashIcon className="w-5 h-5" />
                     <span>Xóa Tất Cả</span>

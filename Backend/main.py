@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.db import Database
 from app.asr_utils import SUPPORTED_EXTENSIONS, convert_directory_to_srt
 from app.ASR.ASRData import from_subtitle_file
+from app.ASR import transcribe
 
 APP_ROOT = Path(__file__).resolve().parent
 DB_PATH = APP_ROOT / "data" / "app.db"
@@ -193,6 +194,29 @@ def export_asr_to_srt(payload: AsrExportRequest) -> Dict[str, Any]:
     }
 
 
+def _transcribe_audio_with_bcut(audio_file_id: str, audio_filename: str) -> Tuple[str, str]:
+    stored = db.get_file(audio_file_id)
+    if stored is None:
+        raise ValueError("Audio source not found")
+
+    data, _content_type, stored_filename = stored
+    resolved_name = audio_filename or stored_filename
+    suffix = Path(resolved_name).suffix.lower()
+    if suffix != ".mp3":
+        raise ValueError("Bcut hiện chỉ hỗ trợ tệp MP3")
+
+    try:
+        asr_data = transcribe(data, "BcutASR", use_cache=True)
+    except Exception as exc:  # pragma: no cover - depends on remote service
+        raise RuntimeError(str(exc)) from exc
+
+    srt_text = asr_data.to_srt()
+    if not srt_text.strip():
+        raise RuntimeError("Bcut trả về dữ liệu rỗng")
+
+    return srt_text, resolved_name
+
+
 @app.post("/projects/{project_id}/asr/generate-missing")
 def generate_missing_project_srts(
     project_id: str,
@@ -203,14 +227,18 @@ def generate_missing_project_srts(
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
     project_files = project.get("files") or []
-    video_files = [f for f in project_files if isinstance(f, dict) and f.get("type") == "video"]
+    media_files = [
+        f
+        for f in project_files
+        if isinstance(f, dict) and f.get("type") in {"video", "audio"}
+    ]
     existing_srt_stems = {
         Path(f.get("name", "")).stem.lower()
         for f in project_files
         if isinstance(f, dict) and f.get("type") == "srt" and f.get("name")
     }
 
-    if not video_files:
+    if not media_files:
         return {
             "status": "ok",
             "project_id": project_id,
@@ -225,80 +253,153 @@ def generate_missing_project_srts(
     request_payload = payload or ProjectAsrGenerationRequest()
     default_source = ASR_ROOT / project_id
     source_dir = _resolve_path(request_payload.source_dir, default=default_source)
-    if source_dir is None or not source_dir.exists():
-        raise HTTPException(status_code=404, detail=f"ASR source directory not found: {source_dir}")
+    if source_dir is None:
+        source_dir = default_source
 
-    output_dir = _resolve_path(request_payload.output_dir, default=source_dir) or source_dir
+    output_dir = _resolve_path(request_payload.output_dir)
+    if output_dir is None:
+        output_dir = default_source
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     source_index: Dict[str, Path] = {}
-    for candidate in source_dir.rglob("*"):
-        if candidate.is_file() and candidate.suffix.lower() in SUPPORTED_EXTENSIONS:
-            source_index.setdefault(candidate.stem.lower(), candidate)
+    if source_dir.exists():
+        for candidate in source_dir.rglob("*"):
+            if candidate.is_file() and candidate.suffix.lower() in SUPPORTED_EXTENSIONS:
+                source_index.setdefault(candidate.stem.lower(), candidate)
+
+    audio_index: Dict[str, Dict[str, Any]] = {}
+    for media in media_files:
+        if media.get("type") != "audio":
+            continue
+        name = media.get("name")
+        file_id = media.get("id")
+        if not name or not file_id:
+            continue
+        audio_index.setdefault(Path(name).stem.lower(), media)
 
     generated: List[Dict[str, Any]] = []
     missing_sources: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
+    processed_targets: Set[str] = set()
 
-    for video in video_files:
-        video_name = video.get("name")
-        video_id = video.get("id")
-        if not video_name or not video_id:
+    def _append_skip(file_obj: Dict[str, Any], reason: str) -> None:
+        skipped.append(
+            {
+                "file_id": file_obj.get("id"),
+                "file_name": file_obj.get("name"),
+                "file_type": file_obj.get("type"),
+                "reason": reason,
+            }
+        )
+
+    def _append_missing(file_obj: Dict[str, Any], reason: str) -> None:
+        missing_sources.append(
+            {
+                "file_id": file_obj.get("id"),
+                "file_name": file_obj.get("name"),
+                "file_type": file_obj.get("type"),
+                "reason": reason,
+            }
+        )
+
+    def _append_error(file_obj: Dict[str, Any], message: str) -> None:
+        errors.append(
+            {
+                "file_id": file_obj.get("id"),
+                "file_name": file_obj.get("name"),
+                "file_type": file_obj.get("type"),
+                "error": message,
+            }
+        )
+
+    def _append_generated(
+        file_obj: Dict[str, Any],
+        output_path: Path,
+        srt_text: str,
+        *,
+        audio_source: Optional[Dict[str, Any]] = None,
+        source_descriptor: Optional[str] = None,
+    ) -> None:
+        output_path.write_text(srt_text, encoding="utf-8")
+        generated.append(
+            {
+                "file_id": file_obj.get("id"),
+                "file_name": file_obj.get("name"),
+                "file_type": file_obj.get("type"),
+                "source": source_descriptor or str(output_path),
+                "output": str(output_path),
+                "srt_filename": output_path.name,
+                "srt_content": srt_text,
+                "audio_file_id": audio_source.get("id") if audio_source else None,
+                "audio_file_name": audio_source.get("name") if audio_source else None,
+            }
+        )
+
+    for media in media_files:
+        media_name = media.get("name")
+        media_id = media.get("id")
+        if not media_name or not media_id:
             continue
 
-        stem = Path(video_name).stem
+        stem = Path(media_name).stem
         stem_lower = stem.lower()
 
+        if stem_lower in processed_targets:
+            continue
+        processed_targets.add(stem_lower)
+
         if stem_lower in existing_srt_stems:
-            skipped.append(
-                {
-                    "video_id": video_id,
-                    "video_name": video_name,
-                    "reason": "subtitle-already-present",
-                }
-            )
+            _append_skip(media, "subtitle-already-present")
             continue
 
         source_file = source_index.get(stem_lower)
-        if source_file is None:
-            missing_sources.append(
-                {
-                    "video_id": video_id,
-                    "video_name": video_name,
-                    "reason": "no-matching-asr",
-                }
-            )
+        if source_file is not None:
+            output_path = output_dir / f"{stem}.srt"
+            try:
+                if not output_path.exists():
+                    asr_data = from_subtitle_file(str(source_file))
+                    asr_data.to_srt(save_path=str(output_path))
+                srt_text = output_path.read_text(encoding="utf-8")
+                if not srt_text.strip():
+                    raise ValueError("Generated SRT is empty")
+                _append_generated(media, output_path, srt_text, source_descriptor=str(source_file))
+            except Exception as exc:  # pragma: no cover
+                _append_error(media, str(exc))
             continue
 
+        audio_candidate: Optional[Dict[str, Any]]
+        if media.get("type") == "audio":
+            audio_candidate = media
+        else:
+            audio_candidate = audio_index.get(stem_lower)
+
+        if audio_candidate is None:
+            _append_missing(media, "no-audio-source")
+            continue
+
+        audio_name = audio_candidate.get("name") or media_name
         output_path = output_dir / f"{stem}.srt"
         try:
-            if not output_path.exists():
-                asr_data = from_subtitle_file(str(source_file))
-                asr_data.to_srt(save_path=str(output_path))
-
-            srt_text = output_path.read_text(encoding="utf-8")
-            if not srt_text.strip():
-                raise ValueError("Generated SRT is empty")
-
-            generated.append(
-                {
-                    "video_id": video_id,
-                    "video_name": video_name,
-                    "source": str(source_file),
-                    "output": str(output_path),
-                    "srt_filename": output_path.name,
-                    "srt_content": srt_text,
-                }
+            srt_text, resolved_name = _transcribe_audio_with_bcut(
+                audio_candidate.get("id"),
+                audio_name,
             )
-        except Exception as exc:  # pragma: no cover - defensive for varied ASR inputs
-            errors.append(
-                {
-                    "video_id": video_id,
-                    "video_name": video_name,
-                    "error": str(exc),
-                }
-            )
+        except ValueError as exc:
+            _append_error(media, str(exc))
+            continue
+        except RuntimeError as exc:
+            _append_error(media, f"Bcut lỗi: {exc}")
+            continue
+
+        _append_generated(
+            media,
+            output_path,
+            srt_text,
+            audio_source=audio_candidate,
+            source_descriptor=f"BcutASR({resolved_name})",
+        )
 
     return {
         "status": "ok",

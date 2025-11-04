@@ -42,34 +42,31 @@ export interface StoredFileMetadata {
     file_size?: number;
 }
 
+export type AsrMediaType = 'video' | 'audio';
+
+export interface AsrGenerationItem {
+    file_id?: string;
+    file_name?: string;
+    file_type?: AsrMediaType;
+    source?: string;
+    output?: string;
+    srt_filename?: string;
+    srt_content?: string;
+    audio_file_id?: string | null;
+    audio_file_name?: string | null;
+    reason?: string;
+    error?: string;
+}
+
 export interface GenerateMissingSrtsResponse {
     status: string;
     project_id: string;
     source_dir: string | null;
     output_dir: string | null;
-    generated: {
-        video_id: string;
-        video_name: string;
-        source?: string;
-        output?: string;
-        srt_filename?: string;
-        srt_content?: string;
-    }[];
-    missing_sources: {
-        video_id: string;
-        video_name: string;
-        reason?: string;
-    }[];
-    skipped: {
-        video_id: string;
-        video_name: string;
-        reason?: string;
-    }[];
-    errors: {
-        video_id: string;
-        video_name: string;
-        error?: string;
-    }[];
+    generated: AsrGenerationItem[];
+    missing_sources: AsrGenerationItem[];
+    skipped: AsrGenerationItem[];
+    errors: AsrGenerationItem[];
 }
 
 export const saveVideo = async (projectId: string, id: string, file: File): Promise<FileUploadResult> => {
