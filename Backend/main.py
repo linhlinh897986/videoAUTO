@@ -7,11 +7,16 @@ from typing import Any, Dict, List, Optional
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from app.db import Database
+from app.asr_utils import convert_directory_to_srt
 
 APP_ROOT = Path(__file__).resolve().parent
 DB_PATH = APP_ROOT / "data" / "app.db"
+ASR_ROOT = APP_ROOT / "data" / "asr"
+
+ASR_ROOT.mkdir(parents=True, exist_ok=True)
 
 db = Database(DB_PATH)
 
@@ -79,22 +84,37 @@ def save_custom_styles(styles: List[Dict[str, Any]] = Body(...)) -> Dict[str, st
 
 
 # --- Files -------------------------------------------------------------------------
-@app.post("/files")
+
+
+class FileUploadResponse(BaseModel):
+    status: str
+    path: Optional[str] = None
+    size: Optional[int] = None
+    created_at: Optional[str] = None
+
+
+@app.post("/files", response_model=FileUploadResponse)
 async def upload_file(
     file_id: str = Form(...),
     project_id: Optional[str] = Form(None),
     file: UploadFile = File(...),
-) -> Dict[str, str]:
+) -> FileUploadResponse:
     data = await file.read()
-    db.save_file(
+    created_at = dt.datetime.utcnow().isoformat()
+    storage_path, file_size = db.save_file(
         file_id=file_id,
         project_id=project_id,
         filename=file.filename or file_id,
         content_type=file.content_type,
         data=data,
-        created_at=dt.datetime.utcnow().isoformat(),
+        created_at=created_at,
     )
-    return {"status": "saved"}
+    return FileUploadResponse(
+        status="saved",
+        path=str(storage_path),
+        size=file_size,
+        created_at=created_at,
+    )
 
 
 @app.get("/files/{file_id}")
@@ -113,6 +133,57 @@ def download_file(file_id: str) -> Response:
 def delete_file(file_id: str) -> Dict[str, str]:
     db.delete_file(file_id)
     return {"status": "deleted"}
+
+
+@app.get("/files/{file_id}/info")
+def file_info(file_id: str) -> Dict[str, Any]:
+    metadata = db.get_file_metadata(file_id)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return metadata
+
+
+class AsrExportRequest(BaseModel):
+    source_dir: str
+    output_dir: Optional[str] = None
+    pattern: Optional[str] = None
+    overwrite: bool = True
+
+
+@app.post("/asr/export-srt")
+def export_asr_to_srt(payload: AsrExportRequest) -> Dict[str, Any]:
+    def _resolve(path_value: Optional[str]) -> Optional[Path]:
+        if not path_value:
+            return None
+        candidate = Path(path_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = (APP_ROOT / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
+        return candidate
+
+    source_dir = _resolve(payload.source_dir)
+    if source_dir is None:
+        raise HTTPException(status_code=400, detail="source_dir is required")
+
+    output_dir = _resolve(payload.output_dir) or ASR_ROOT
+
+    try:
+        conversion = convert_directory_to_srt(
+            source_dir=source_dir,
+            output_dir=output_dir,
+            pattern=payload.pattern,
+            overwrite=payload.overwrite,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {
+        "status": "ok",
+        "source_dir": str(source_dir),
+        "output_dir": str(output_dir),
+        **conversion,
+    }
 
 
 __all__ = ["app"]

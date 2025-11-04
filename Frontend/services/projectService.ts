@@ -26,7 +26,23 @@ const jsonFetch = async <T>(path: string, options: RequestInit = {}): Promise<T>
 };
 
 // --- FILE STORAGE HELPERS ---------------------------------------------------------
-export const saveVideo = async (projectId: string, id: string, file: File): Promise<void> => {
+export interface FileUploadResult {
+    path?: string;
+    size?: number;
+    created_at?: string;
+}
+
+export interface StoredFileMetadata {
+    id: string;
+    project_id?: string;
+    filename: string;
+    content_type?: string;
+    created_at?: string;
+    storage_path?: string;
+    file_size?: number;
+}
+
+export const saveVideo = async (projectId: string, id: string, file: File): Promise<FileUploadResult> => {
     const formData = new FormData();
     formData.append('file_id', id);
     formData.append('project_id', projectId);
@@ -40,6 +56,16 @@ export const saveVideo = async (projectId: string, id: string, file: File): Prom
     if (!response.ok) {
         const message = await response.text();
         throw new Error(message || `Failed to upload file ${id}`);
+    }
+    try {
+        const payload = await response.json();
+        return {
+            path: payload?.path ?? undefined,
+            size: payload?.size ?? undefined,
+            created_at: payload?.created_at ?? undefined,
+        };
+    } catch (error) {
+        return {};
     }
 };
 
@@ -64,6 +90,18 @@ export const deleteVideo = async (id: string): Promise<void> => {
         const message = await response.text();
         throw new Error(message || `Failed to delete file ${id}`);
     }
+};
+
+export const getStoredFileInfo = async (id: string): Promise<StoredFileMetadata | null> => {
+    const response = await fetch(`${API_BASE_URL}/files/${id}/info`);
+    if (response.status === 404) {
+        return null;
+    }
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Failed to retrieve metadata for file ${id}`);
+    }
+    return (await response.json()) as StoredFileMetadata;
 };
 
 // --- DATA ABSTRACTION LAYER (PUBLIC API) ------------------------------------------

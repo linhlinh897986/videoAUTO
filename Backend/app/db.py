@@ -12,6 +12,8 @@ class Database:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._file_root = self._db_path.parent / "files"
+        self._file_root.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -50,10 +52,26 @@ class Database:
                     content_type TEXT,
                     data BLOB NOT NULL,
                     created_at TEXT NOT NULL,
+                    storage_path TEXT,
+                    file_size INTEGER,
                     FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
                 );
                 """
             )
+            self._ensure_file_columns(conn)
+
+    def _ensure_file_columns(self, conn: sqlite3.Connection) -> None:
+        """Ensure newer metadata columns exist for the files table."""
+
+        def _add_column(column: str, ddl: str) -> None:
+            try:
+                conn.execute(f"ALTER TABLE files ADD COLUMN {column} {ddl}")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+
+        _add_column("storage_path", "TEXT")
+        _add_column("file_size", "INTEGER")
 
     # --- Projects -----------------------------------------------------------------
     def list_projects(self) -> List[Dict[str, Any]]:
@@ -123,34 +141,105 @@ class Database:
         content_type: Optional[str],
         data: bytes,
         created_at: str,
-    ) -> None:
+    ) -> Tuple[Path, int]:
         if not file_id:
             raise ValueError("File ID must be provided")
 
+        # Persist file on disk so large media assets remain accessible outside the database
+        safe_filename = Path(file_id).name or filename
+        project_folder = project_id or "unassigned"
+        target_dir = self._file_root / project_folder
+        target_dir.mkdir(parents=True, exist_ok=True)
+        storage_path = target_dir / safe_filename
+        storage_path.write_bytes(data)
+        file_size = storage_path.stat().st_size
+
         with self._connect() as conn:
             conn.execute(
-                "REPLACE INTO files (id, project_id, filename, content_type, data, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (file_id, project_id, filename, content_type, data, created_at),
+                "REPLACE INTO files (id, project_id, filename, content_type, data, created_at, storage_path, file_size)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    file_id,
+                    project_id,
+                    filename,
+                    content_type,
+                    data,
+                    created_at,
+                    str(storage_path),
+                    file_size,
+                ),
             )
             conn.commit()
+
+        return storage_path, file_size
 
     def get_file(self, file_id: str) -> Optional[Tuple[bytes, Optional[str], str]]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT data, content_type, filename FROM files WHERE id = ?",
+                "SELECT data, content_type, filename, storage_path FROM files WHERE id = ?",
                 (file_id,),
             ).fetchone()
         if row is None:
             return None
+        storage_path = row["storage_path"]
+        if storage_path:
+            path = Path(storage_path)
+            if path.exists():
+                return path.read_bytes(), row["content_type"], row["filename"]
         return row["data"], row["content_type"], row["filename"]
 
-    def delete_file(self, file_id: str) -> None:
+    def get_file_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, project_id, filename, content_type, created_at, storage_path, file_size"
+                " FROM files WHERE id = ?",
+                (file_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "filename": row["filename"],
+            "content_type": row["content_type"],
+            "created_at": row["created_at"],
+            "storage_path": row["storage_path"],
+            "file_size": row["file_size"],
+        }
+
+    def delete_file(self, file_id: str) -> None:
+        storage_path: Optional[str] = None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT storage_path FROM files WHERE id = ?",
+                (file_id,),
+            ).fetchone()
+            if row is not None:
+                storage_path = row["storage_path"]
             conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
             conn.commit()
 
+        if storage_path:
+            path = Path(storage_path)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
     def delete_files_for_project(self, project_id: str) -> None:
+        storage_paths: List[str] = []
         with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT storage_path FROM files WHERE project_id = ?",
+                (project_id,),
+            ).fetchall()
+            storage_paths = [row["storage_path"] for row in rows if row["storage_path"]]
             conn.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
             conn.commit()
+
+        for storage_path in storage_paths:
+            path = Path(storage_path)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass

@@ -3,11 +3,11 @@ import JSZip from 'jszip';
 import { Project, SrtFile, CustomStyle, KeywordPair, Character, ApiKey, SubtitleBlock, ContextItem, VideoFile, AudioFile } from '../../types';
 import { parseSrt, composeSrt, formatForGemini } from '../../services/srtParser';
 import { batchTranslateFiles, countTokensInText } from '../../services/geminiService';
-import { saveVideo, deleteVideo, getVideoUrl } from '../../services/projectService';
+import { saveVideo, deleteVideo, getVideoUrl, getStoredFileInfo } from '../../services/projectService';
 import { analyzeVideoForHardsubs, preloadAudioBuffer } from '../../services/videoAnalysisService';
 import {
   UploadIcon, TrashIcon, TranslateIcon, DownloadIcon,
-  LoadingSpinner, DownloadAllIcon, ClipboardIcon, XMarkIcon, FilmIcon, ClapperboardEditLinear, AudioWaveIcon
+  LoadingSpinner, DownloadAllIcon, ClipboardIcon, FilmIcon, ClapperboardEditLinear, AudioWaveIcon
 } from '../ui/Icons';
 
 
@@ -23,6 +23,7 @@ interface ProjectFilesProps {
 const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, onEditVideo, processingStatus, setProcessingStatus }) => {
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [activelyTranslating, setActivelyTranslating] = useState<Set<string>>(new Set());
+  const [clipboardMessage, setClipboardMessage] = useState<string | null>(null);
   
   const srtFiles = useMemo(() => project.files.filter((f): f is SrtFile => f.type === 'srt'), [project.files]);
   const sortedFiles = useMemo(() => {
@@ -30,18 +31,24 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
   }, [project.files]);
   
   const totalTokens = useMemo(() => srtFiles.reduce((acc, file) => acc + (file.tokenCount || 0), 0), [srtFiles]);
-  
+
   const isProcessingAnyFile = Object.keys(processingStatus).length > 0;
 
   useEffect(() => {
     const fileExists = sortedFiles.some(f => f.id === selectedFileId);
     if (!selectedFileId && sortedFiles.length > 0) {
       setSelectedFileId(sortedFiles[0].id);
-    } 
+    }
     else if (selectedFileId && !fileExists) {
       setSelectedFileId(sortedFiles[0]?.id || null);
     }
   }, [sortedFiles, selectedFileId]);
+
+  useEffect(() => {
+    if (!clipboardMessage) return;
+    const timeout = setTimeout(() => setClipboardMessage(null), 2500);
+    return () => clearTimeout(timeout);
+  }, [clipboardMessage]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
@@ -130,7 +137,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
     for (const { file, videoInfo } of newVideoFiles) {
         try {
             setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Đang lưu video...' }));
-            await saveVideo(project.id, videoInfo.id, file);
+            const uploadResult = await saveVideo(project.id, videoInfo.id, file);
             const videoUrl = await getVideoUrl(videoInfo.id);
 
             if (videoUrl) {
@@ -157,6 +164,16 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
 
                 await Promise.all([waveformPromise, hardsubPromise]);
             }
+            if (uploadResult.path || uploadResult.size || uploadResult.created_at) {
+                onUpdateProject(project.id, p => ({
+                    files: p.files.map(f => f.id === videoInfo.id ? {
+                        ...f,
+                        storagePath: uploadResult.path ?? (f as VideoFile).storagePath,
+                        fileSize: uploadResult.size ?? (f as VideoFile).fileSize,
+                        uploadedAt: uploadResult.created_at ?? (f as VideoFile).uploadedAt,
+                    } : f)
+                }));
+            }
             setProcessingStatus(prev => { const s = {...prev}; delete s[videoInfo.id]; return s; });
         } catch (error) {
             console.error(`Error processing video ${videoInfo.name}:`, error);
@@ -168,7 +185,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
     for (const { file, audioInfo } of newAudioFiles) {
         try {
             setProcessingStatus(prev => ({ ...prev, [audioInfo.id]: 'Đang lưu audio...' }));
-            await saveVideo(project.id, audioInfo.id, file);
+            const uploadResult = await saveVideo(project.id, audioInfo.id, file);
             const audioUrl = await getVideoUrl(audioInfo.id);
 
             if (audioUrl) {
@@ -182,9 +199,19 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                 onUpdateProject(project.id, p => ({
                     files: p.files.map(f => f.id === audioInfo.id ? { ...f, duration } : f)
                 }));
-                
+
                 setProcessingStatus(prev => ({ ...prev, [audioInfo.id]: 'Đang tạo waveform...' }));
                 await preloadAudioBuffer(audioUrl);
+            }
+            if (uploadResult.path || uploadResult.size || uploadResult.created_at) {
+                onUpdateProject(project.id, p => ({
+                    files: p.files.map(f => f.id === audioInfo.id ? {
+                        ...f,
+                        storagePath: uploadResult.path ?? (f as AudioFile).storagePath,
+                        fileSize: uploadResult.size ?? (f as AudioFile).fileSize,
+                        uploadedAt: uploadResult.created_at ?? (f as AudioFile).uploadedAt,
+                    } : f)
+                }));
             }
             setProcessingStatus(prev => { const s = {...prev}; delete s[audioInfo.id]; return s; });
         } catch (error) {
@@ -316,6 +343,68 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
   };
 
   const selectedFile = useMemo(() => project.files.find(f => f.id === selectedFileId), [project.files, selectedFileId]);
+
+  useEffect(() => {
+    if (!selectedFile) return;
+    if (selectedFile.type === 'video' || selectedFile.type === 'audio') {
+        const hasMetadata = (selectedFile as VideoFile | AudioFile).storagePath || (selectedFile as VideoFile | AudioFile).fileSize;
+        if (!hasMetadata) {
+            getStoredFileInfo(selectedFile.id)
+                .then(info => {
+                    if (info?.storage_path || info?.file_size || info?.created_at) {
+                        onUpdateProject(project.id, p => ({
+                            files: p.files.map(f => f.id === selectedFile.id ? {
+                                ...f,
+                                storagePath: info.storage_path ?? (f as VideoFile | AudioFile).storagePath,
+                                fileSize: info.file_size ?? (f as VideoFile | AudioFile).fileSize,
+                                uploadedAt: info.created_at ?? (f as VideoFile | AudioFile).uploadedAt,
+                            } : f)
+                        }));
+                    }
+                })
+                .catch(error => console.error('Failed to fetch metadata', error));
+        }
+    }
+  }, [selectedFile, onUpdateProject, project.id]);
+
+  const formatBytes = (size?: number): string => {
+    if (size === undefined || size === null) return 'Không rõ';
+    if (size === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const exponent = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
+    const value = size / Math.pow(1024, exponent);
+    return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+        await navigator.clipboard.writeText(text);
+        setClipboardMessage('Đã sao chép đường dẫn vào clipboard');
+    } catch (error) {
+        console.error('Clipboard error', error);
+        setClipboardMessage('Không thể sao chép. Vui lòng thử lại.');
+    }
+  };
+
+  const handleDownloadMedia = async (file: VideoFile | AudioFile) => {
+    try {
+        const mediaUrl = await getVideoUrl(file.id);
+        if (!mediaUrl) {
+            setClipboardMessage('Không tìm thấy tệp để tải.');
+            return;
+        }
+        const link = document.createElement('a');
+        link.href = mediaUrl;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(mediaUrl), 0);
+    } catch (error) {
+        console.error('Download error', error);
+        setClipboardMessage('Tải về thất bại.');
+    }
+  };
   
   return (
     <>
@@ -389,7 +478,12 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                 </button>
               </div>
           </div>
-          <div className="w-3/4 flex flex-col h-full">
+          <div className="w-3/4 flex flex-col h-full relative">
+              {clipboardMessage && (
+                <div className="absolute top-2 right-4 bg-gray-900/80 border border-gray-700 text-gray-100 px-4 py-2 rounded shadow-lg text-sm z-10">
+                  {clipboardMessage}
+                </div>
+              )}
               <div className="flex-grow flex flex-col overflow-hidden">
                 {selectedFile?.type === 'srt' ? (
                   <>
@@ -438,8 +532,46 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                     </div>
                   </>
                 ) : selectedFile ? (
-                  <div className="flex-grow flex items-center justify-center text-gray-500 text-center p-4">
-                     <p>Đây là tệp {selectedFile.type}. <br/> Chọn một tệp SRT để xem phụ đề, hoặc sử dụng nút "Chỉnh sửa" trên tệp video để mở trình chỉnh sửa.</p>
+                  <div className="flex-grow overflow-y-auto p-6 text-sm text-gray-200">
+                    <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-6 space-y-4">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <div>
+                          <h4 className="text-xl font-semibold text-white">{selectedFile.name}</h4>
+                          <p className="text-gray-400 capitalize">Loại tệp: {selectedFile.type === 'video' ? 'Video' : 'Âm thanh'}</p>
+                        </div>
+                        <button
+                          onClick={() => handleDownloadMedia(selectedFile as VideoFile | AudioFile)}
+                          className="self-start md:self-auto bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded shadow"
+                        >
+                          Tải xuống bản gốc
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs md:text-sm">
+                        <div className="space-y-2">
+                          <p className="text-gray-400">Dung lượng: <span className="text-gray-100">{formatBytes((selectedFile as VideoFile | AudioFile).fileSize)}</span></p>
+                          <p className="text-gray-400">Thời gian tải lên: <span className="text-gray-100">{(selectedFile as VideoFile | AudioFile).uploadedAt ? new Date((selectedFile as VideoFile | AudioFile).uploadedAt as string).toLocaleString() : 'Không rõ'}</span></p>
+                        </div>
+                        <div className="space-y-2">
+                          <p className="text-gray-400">Đường dẫn Colab:</p>
+                          {(selectedFile as VideoFile | AudioFile).storagePath ? (
+                            <div className="bg-gray-950/70 border border-gray-800 rounded p-2 text-xs break-all">
+                              {(selectedFile as VideoFile | AudioFile).storagePath}
+                              <button
+                                onClick={() => copyToClipboard((selectedFile as VideoFile | AudioFile).storagePath!)}
+                                className="mt-2 inline-flex items-center text-indigo-400 hover:text-indigo-200"
+                              >
+                                Sao chép đường dẫn
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="text-gray-500">Không tìm thấy đường dẫn đã lưu. Nếu đây là tệp cũ, hãy tải lại để đồng bộ.</p>
+                          )}
+                        </div>
+                      </div>
+                      {selectedFile.type === 'video' && (
+                        <p className="text-gray-500 text-xs">Sử dụng đường dẫn này trong Colab để dựng video hoặc xử lý hậu kỳ.</p>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="flex-grow flex items-center justify-center text-gray-500">

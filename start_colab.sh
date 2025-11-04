@@ -160,6 +160,8 @@ print_summary() {
     log "--- Setup Complete ---"
     log "Backend local URL:   http://127.0.0.1:$BACKEND_PORT (inside Colab runtime)"
     log "Frontend public URL: $frontend_url"
+    log "Uploaded media path: $ROOT_DIR/Backend/data/files"
+    log "ASR SRT exports:     $ROOT_DIR/Backend/data/asr"
     log "Backend log:   $LOG_DIR/backend.log"
     log "Frontend log:  $LOG_DIR/frontend.log"
     log "ngrok log:     $LOG_DIR/ngrok.log"
