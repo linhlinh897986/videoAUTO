@@ -64,9 +64,6 @@ ensure_ngrok() {
 version: 2
 authtoken: $NGROK_TOKEN
 tunnels:
-  backend:
-    addr: $BACKEND_PORT
-    proto: http
   frontend:
     addr: $FRONTEND_PORT
     proto: http
@@ -124,37 +121,36 @@ for tunnel in data.get("tunnels", []):
 PY
 }
 
-start_frontend() {
-    cleanup_process "npm run dev"
-
-    local backend_url=""
+wait_for_backend() {
+    log "Waiting for backend readiness on http://127.0.0.1:$BACKEND_PORT"
     local attempts=0
-    while [ $attempts -lt 15 ]; do
-        backend_url=$(extract_ngrok_url backend)
-        if [ -n "$backend_url" ]; then
-            break
+    while [ $attempts -lt 30 ]; do
+        if curl -sS "http://127.0.0.1:$BACKEND_PORT/health" >/dev/null 2>&1; then
+            return 0
         fi
         sleep 2
         attempts=$((attempts + 1))
     done
 
-    if [ -z "$backend_url" ]; then
-        log "Failed to determine backend ngrok URL"
-        exit 1
-    fi
+    log "Backend did not become ready in time"
+    exit 1
+}
 
-    log "Starting Vite frontend on port $FRONTEND_PORT (API base: $backend_url)"
-    (cd "$ROOT_DIR/Frontend" && VITE_API_BASE_URL="$backend_url" nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" > "$LOG_DIR/frontend.log" 2>&1 &)
+start_frontend() {
+    cleanup_process "npm run dev"
+    wait_for_backend
+
+    log "Starting Vite frontend on port $FRONTEND_PORT (API base: local backend)"
+    (cd "$ROOT_DIR/Frontend" && VITE_API_BASE_URL="" nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" > "$LOG_DIR/frontend.log" 2>&1 &)
 }
 
 print_summary() {
-    local backend_url="" frontend_url=""
+    local frontend_url=""
 
     local attempts=0
     while [ $attempts -lt 15 ]; do
-        backend_url=$(extract_ngrok_url backend)
         frontend_url=$(extract_ngrok_url frontend)
-        if [ -n "$backend_url" ] && [ -n "$frontend_url" ]; then
+        if [ -n "$frontend_url" ]; then
             break
         fi
         sleep 2
@@ -162,7 +158,7 @@ print_summary() {
     done
 
     log "--- Setup Complete ---"
-    log "Backend public URL:  $backend_url"
+    log "Backend local URL:   http://127.0.0.1:$BACKEND_PORT (inside Colab runtime)"
     log "Frontend public URL: $frontend_url"
     log "Backend log:   $LOG_DIR/backend.log"
     log "Frontend log:  $LOG_DIR/frontend.log"

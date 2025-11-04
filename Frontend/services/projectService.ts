@@ -1,7 +1,8 @@
 import { Project, CustomStyle, ApiKey } from '../types';
 import { encrypt, decrypt } from './encryptionService';
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+const rawBase = import.meta.env.VITE_API_BASE_URL ?? '';
+const API_BASE_URL = rawBase ? rawBase.replace(/\/$/, '') : '';
 
 const jsonFetch = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
     const response = await fetch(`${API_BASE_URL}${path}`, {
