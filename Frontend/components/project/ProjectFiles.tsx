@@ -341,16 +341,31 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
     try {
         const response = await generateMissingSrtsFromAsr(project.id);
         const generatedItems = (response.generated || []).filter(item => (item?.srt_content || '').trim().length > 0);
-        const missingAudioCount = (response.missing_sources || []).filter(item => item.reason === 'no-audio-source').length;
-        const mp3ErrorCount = (response.errors || []).filter(item => (item.error || '').toLowerCase().includes('mp3')).length;
+        const missingAudioSources = (response.missing_sources || []).filter(item => item.reason === 'no-audio-source').length;
+        const missingAudioTracks = (response.missing_sources || []).filter(item => item.reason === 'no-audio-track').length;
+        const conversionErrors = (response.errors || []).filter(item => item.reason === 'audio-conversion-failed').length;
+        const ffmpegMissingErrors = (response.errors || []).filter(item => item.reason === 'ffmpeg-missing').length;
+        const bcutErrors = (response.errors || []).filter(item => item.reason === 'bcut-error').length;
 
         if (generatedItems.length === 0) {
-            if (missingAudioCount > 0) {
-                setClipboardMessage('Không tìm thấy tệp âm thanh MP3 cùng tên để gửi tới Bcut. Vui lòng tải lên file .mp3 trùng tên với video.');
+            if (missingAudioSources > 0) {
+                setClipboardMessage('Không tìm thấy âm thanh tương ứng cho một số tệp. Hãy tải lên hoặc kiểm tra lại nguồn audio.');
                 return;
             }
-            if (mp3ErrorCount > 0) {
-                setClipboardMessage('Các tệp âm thanh phải ở định dạng MP3 để dùng với Bcut. Hãy chuyển đổi và thử lại.');
+            if (missingAudioTracks > 0) {
+                setClipboardMessage('Một số video không chứa track âm thanh để trích xuất. Vui lòng kiểm tra lại nội dung gốc.');
+                return;
+            }
+            if (conversionErrors > 0) {
+                setClipboardMessage('Không thể trích xuất âm thanh bằng ffmpeg cho một số tệp. Kiểm tra log để biết chi tiết.');
+                return;
+            }
+            if (ffmpegMissingErrors > 0) {
+                setClipboardMessage('Máy chủ thiếu ffmpeg nên không thể tách âm thanh tự động.');
+                return;
+            }
+            if (bcutErrors > 0) {
+                setClipboardMessage('Bcut báo lỗi khi tạo phụ đề. Vui lòng thử lại sau.');
                 return;
             }
             const hasPendingMedia = (response.missing_sources?.length || 0) > 0;
@@ -393,19 +408,28 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
         setSelectedFileId(newSrtFiles[0].id);
 
         const extraNotices: string[] = [];
-        if (missingAudioCount > 0) {
-            extraNotices.push(`${missingAudioCount} tệp cần thêm audio MP3 cùng tên`);
+        if (missingAudioSources > 0) {
+            extraNotices.push(`${missingAudioSources} tệp chưa có nguồn âm thanh`);
         }
-        const remainingMissing = (response.missing_sources?.length || 0) - missingAudioCount;
+        if (missingAudioTracks > 0) {
+            extraNotices.push(`${missingAudioTracks} video không có track âm thanh`);
+        }
+        const remainingMissing = (response.missing_sources?.length || 0) - missingAudioSources - missingAudioTracks;
         if (remainingMissing > 0) {
             extraNotices.push(`${remainingMissing} tệp thiếu dữ liệu ASR`);
         }
-        const errorCount = response.errors?.length || 0;
-        if (errorCount > 0) {
-            extraNotices.push(`${errorCount} lỗi khi chuyển đổi`);
+        if (conversionErrors > 0) {
+            extraNotices.push(`${conversionErrors} lỗi khi trích xuất audio bằng ffmpeg`);
         }
-        if (mp3ErrorCount > 0 && !extraNotices.some(note => note.includes('MP3'))) {
-            extraNotices.push('Một số tệp cần đổi sang MP3');
+        if (ffmpegMissingErrors > 0) {
+            extraNotices.push('Thiếu ffmpeg trên máy chủ');
+        }
+        if (bcutErrors > 0) {
+            extraNotices.push(`${bcutErrors} lỗi từ Bcut`);
+        }
+        const autoExtractedCount = generatedItems.filter(item => item.audio_source_type === 'video').length;
+        if (autoExtractedCount > 0) {
+            extraNotices.push(`Đã tự động tách âm thanh cho ${autoExtractedCount} video`);
         }
         const statusMessage = [`Đã thêm ${newSrtFiles.length} phụ đề từ ASR/Bcut.`];
         if (extraNotices.length > 0) {
@@ -565,7 +589,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                     <span>Tạo SRT từ ASR</span>
                 </button>
                 <p className="text-xs text-amber-200/80 text-center">
-                    Bcut cần tệp âm thanh <span className="font-semibold">.mp3</span> trùng tên với video để tạo phụ đề.
+                    Hệ thống sẽ cố gắng tách âm thanh bằng ffmpeg nếu chưa có file audio phù hợp.
                 </p>
                 <button onClick={handleDeleteAllFiles} disabled={project.files.length === 0} className="w-full bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2">
                     <TrashIcon className="w-5 h-5" />

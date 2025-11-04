@@ -54,6 +54,8 @@ export interface AsrGenerationItem {
     srt_content?: string;
     audio_file_id?: string | null;
     audio_file_name?: string | null;
+    audio_source_type?: AsrMediaType | null;
+    audio_converted_filename?: string | null;
     reason?: string;
     error?: string;
 }

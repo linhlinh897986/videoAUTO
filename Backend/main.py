@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -194,19 +197,90 @@ def export_asr_to_srt(payload: AsrExportRequest) -> Dict[str, Any]:
     }
 
 
-def _transcribe_audio_with_bcut(audio_file_id: str, audio_filename: str) -> Tuple[str, str]:
+class AudioPreparationError(RuntimeError):
+    def __init__(self, message: str, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _ensure_mp3_payload(data: bytes, source_name: str) -> Tuple[bytes, str, Optional[str]]:
+    suffix = Path(source_name).suffix.lower()
+    if suffix == ".mp3":
+        return data, source_name, None
+
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        raise AudioPreparationError("ffmpeg không khả dụng để trích xuất âm thanh", "ffmpeg-missing")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".bin") as tmp_in:
+        tmp_in.write(data)
+        input_path = Path(tmp_in.name)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_out:
+        output_path = Path(tmp_out.name)
+
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg_path,
+                "-y",
+                "-i",
+                str(input_path),
+                "-vn",
+                "-acodec",
+                "libmp3lame",
+                str(output_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="ignore").strip()
+            raise AudioPreparationError(
+                f"Không thể chuyển '{source_name}' sang MP3: {stderr or 'ffmpeg trả về lỗi'}",
+                "audio-conversion-failed",
+            )
+
+        converted = output_path.read_bytes()
+        if not converted:
+            raise AudioPreparationError(
+                f"Không tìm thấy track âm thanh trong '{source_name}'",
+                "no-audio-track",
+            )
+    finally:
+        try:
+            input_path.unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            output_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    converted_name = f"{Path(source_name).stem}.mp3"
+    return converted, converted_name, source_name
+
+
+def _transcribe_audio_with_bcut(audio_file_id: str, audio_filename: str) -> Tuple[str, str, Optional[str]]:
     stored = db.get_file(audio_file_id)
     if stored is None:
-        raise ValueError("Audio source not found")
+        raise AudioPreparationError("Không tìm thấy dữ liệu âm thanh", "no-audio-source")
 
     data, _content_type, stored_filename = stored
     resolved_name = audio_filename or stored_filename
-    suffix = Path(resolved_name).suffix.lower()
-    if suffix != ".mp3":
-        raise ValueError("Bcut hiện chỉ hỗ trợ tệp MP3")
+    if not resolved_name:
+        resolved_name = audio_file_id
 
     try:
-        asr_data = transcribe(data, "BcutASR", use_cache=True)
+        payload, mp3_name, original_name = _ensure_mp3_payload(data, resolved_name)
+    except AudioPreparationError:
+        raise
+    except Exception as exc:  # pragma: no cover - unexpected conversion errors
+        raise AudioPreparationError(str(exc), "audio-conversion-failed") from exc
+
+    try:
+        asr_data = transcribe(payload, "BcutASR", use_cache=True)
     except Exception as exc:  # pragma: no cover - depends on remote service
         raise RuntimeError(str(exc)) from exc
 
@@ -214,7 +288,7 @@ def _transcribe_audio_with_bcut(audio_file_id: str, audio_filename: str) -> Tupl
     if not srt_text.strip():
         raise RuntimeError("Bcut trả về dữ liệu rỗng")
 
-    return srt_text, resolved_name
+    return srt_text, mp3_name, original_name
 
 
 @app.post("/projects/{project_id}/asr/generate-missing")
@@ -304,13 +378,14 @@ def generate_missing_project_srts(
             }
         )
 
-    def _append_error(file_obj: Dict[str, Any], message: str) -> None:
+    def _append_error(file_obj: Dict[str, Any], message: str, *, reason: Optional[str] = None) -> None:
         errors.append(
             {
                 "file_id": file_obj.get("id"),
                 "file_name": file_obj.get("name"),
                 "file_type": file_obj.get("type"),
                 "error": message,
+                "reason": reason,
             }
         )
 
@@ -321,6 +396,7 @@ def generate_missing_project_srts(
         *,
         audio_source: Optional[Dict[str, Any]] = None,
         source_descriptor: Optional[str] = None,
+        audio_converted_filename: Optional[str] = None,
     ) -> None:
         output_path.write_text(srt_text, encoding="utf-8")
         generated.append(
@@ -334,6 +410,8 @@ def generate_missing_project_srts(
                 "srt_content": srt_text,
                 "audio_file_id": audio_source.get("id") if audio_source else None,
                 "audio_file_name": audio_source.get("name") if audio_source else None,
+                "audio_source_type": audio_source.get("type") if audio_source else None,
+                "audio_converted_filename": audio_converted_filename,
             }
         )
 
@@ -373,7 +451,9 @@ def generate_missing_project_srts(
         if media.get("type") == "audio":
             audio_candidate = media
         else:
-            audio_candidate = audio_index.get(stem_lower)
+            audio_candidate = audio_index.get(stem_lower) or (
+                media if media.get("type") == "video" else None
+            )
 
         if audio_candidate is None:
             _append_missing(media, "no-audio-source")
@@ -382,23 +462,31 @@ def generate_missing_project_srts(
         audio_name = audio_candidate.get("name") or media_name
         output_path = output_dir / f"{stem}.srt"
         try:
-            srt_text, resolved_name = _transcribe_audio_with_bcut(
+            srt_text, converted_name, original_source = _transcribe_audio_with_bcut(
                 audio_candidate.get("id"),
                 audio_name,
             )
-        except ValueError as exc:
-            _append_error(media, str(exc))
+        except AudioPreparationError as exc:
+            if exc.reason in {"no-audio-source", "no-audio-track"}:
+                _append_missing(media, exc.reason)
+            else:
+                _append_error(media, str(exc), reason=exc.reason)
             continue
         except RuntimeError as exc:
-            _append_error(media, f"Bcut lỗi: {exc}")
+            _append_error(media, f"Bcut lỗi: {exc}", reason="bcut-error")
             continue
+
+        descriptor = f"BcutASR({converted_name})"
+        if original_source and original_source != converted_name:
+            descriptor = f"BcutASR({converted_name} ⇐ {original_source})"
 
         _append_generated(
             media,
             output_path,
             srt_text,
             audio_source=audio_candidate,
-            source_descriptor=f"BcutASR({resolved_name})",
+            source_descriptor=descriptor,
+            audio_converted_filename=converted_name if original_source else None,
         )
 
     return {
