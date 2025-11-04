@@ -616,8 +616,37 @@ async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[
                     })
                     continue
                 
+                # Verify the file exists and is not empty
+                if not temp_path.exists():
+                    errors.append({
+                        "subtitle_id": subtitle_id,
+                        "error": "TTS file was not created",
+                    })
+                    continue
+                
                 # Read generated audio
                 audio_data = temp_path.read_bytes()
+                
+                if len(audio_data) == 0:
+                    errors.append({
+                        "subtitle_id": subtitle_id,
+                        "error": "TTS file is empty",
+                    })
+                    continue
+                
+                # Verify it's an MP3 file by checking magic bytes
+                # MP3 files start with ID3 (0x49 0x44 0x33) or 0xFF 0xFB/0xFF 0xF3/0xFF 0xF2
+                is_mp3 = (
+                    audio_data[:3] == b'ID3' or  # ID3 tag
+                    (len(audio_data) >= 2 and audio_data[0] == 0xFF and audio_data[1] in (0xFB, 0xF3, 0xF2))  # MP3 frame sync
+                )
+                
+                if not is_mp3:
+                    errors.append({
+                        "subtitle_id": subtitle_id,
+                        "error": f"Generated file is not a valid MP3 (magic bytes: {audio_data[:4].hex() if len(audio_data) >= 4 else 'empty'})",
+                    })
+                    continue
                 
                 # Save to database
                 created_at = dt.datetime.utcnow().isoformat()
