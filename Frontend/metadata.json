@@ -1,0 +1,5 @@
+{
+  "name": "VIDEO 1.6 beta",
+  "description": "Một ứng dụng để dịch các tệp phụ đề SRT bằng các phong cách khác nhau và thay thế từ khóa, được cung cấp bởi Gemini API.",
+  "requestFramePermissions": []
+}
