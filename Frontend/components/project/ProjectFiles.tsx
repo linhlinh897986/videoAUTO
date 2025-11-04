@@ -3,11 +3,11 @@ import JSZip from 'jszip';
 import { Project, SrtFile, CustomStyle, KeywordPair, Character, ApiKey, SubtitleBlock, ContextItem, VideoFile, AudioFile } from '../../types';
 import { parseSrt, composeSrt, formatForGemini } from '../../services/srtParser';
 import { batchTranslateFiles, countTokensInText } from '../../services/geminiService';
-import { saveVideo, deleteVideo, getVideoUrl, getStoredFileInfo } from '../../services/projectService';
+import { saveVideo, deleteVideo, getVideoUrl, getStoredFileInfo, generateMissingSrtsFromAsr } from '../../services/projectService';
 import { analyzeVideoForHardsubs, preloadAudioBuffer } from '../../services/videoAnalysisService';
 import {
   UploadIcon, TrashIcon, TranslateIcon, DownloadIcon,
-  LoadingSpinner, DownloadAllIcon, ClipboardIcon, FilmIcon, ClapperboardEditLinear, AudioWaveIcon
+  LoadingSpinner, DownloadAllIcon, ClipboardIcon, FilmIcon, ClapperboardEditLinear, AudioWaveIcon, SubtitlesIcon
 } from '../ui/Icons';
 
 
@@ -24,6 +24,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [activelyTranslating, setActivelyTranslating] = useState<Set<string>>(new Set());
   const [clipboardMessage, setClipboardMessage] = useState<string | null>(null);
+  const [isGeneratingSrts, setIsGeneratingSrts] = useState<boolean>(false);
   
   const srtFiles = useMemo(() => project.files.filter((f): f is SrtFile => f.type === 'srt'), [project.files]);
   const sortedFiles = useMemo(() => {
@@ -331,6 +332,75 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
     link.click();
     document.body.removeChild(link);
   };
+
+  const handleGenerateSrtsFromAsr = async () => {
+    if (isGeneratingSrts) {
+        return;
+    }
+    setIsGeneratingSrts(true);
+    try {
+        const response = await generateMissingSrtsFromAsr(project.id);
+        const generatedItems = (response.generated || []).filter(item => (item?.srt_content || '').trim().length > 0);
+
+        if (generatedItems.length === 0) {
+            const hasPendingVideos = (response.missing_sources?.length || 0) > 0;
+            const message = hasPendingVideos
+                ? 'Không tìm thấy dữ liệu ASR phù hợp cho các video chưa có phụ đề.'
+                : 'Tất cả video đã có phụ đề hoặc không có video nào cần tạo.';
+            setClipboardMessage(message);
+            return;
+        }
+
+        const newSrtFiles: SrtFile[] = [];
+        for (const item of generatedItems) {
+            const subtitles = parseSrt(item.srt_content ?? '');
+            if (subtitles.length === 0) {
+                console.warn('Generated ASR subtitle is empty after parsing', item);
+                continue;
+            }
+            const fallbackName = item.video_name ? item.video_name.replace(/\.[^/.]+$/, '') + '.srt' : `subtitle-${Date.now()}.srt`;
+            const fileName = item.srt_filename || fallbackName;
+            const generatedId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+                ? crypto.randomUUID()
+                : `asr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            newSrtFiles.push({
+                id: generatedId,
+                name: fileName,
+                type: 'srt',
+                originalSubtitles: subtitles,
+                translatedSubtitles: subtitles.map(sub => ({ ...sub, text: '' })),
+            });
+        }
+
+        if (newSrtFiles.length === 0) {
+            setClipboardMessage('Không thể phân tích phụ đề ASR được tạo.');
+            return;
+        }
+
+        onUpdateProject(project.id, p => ({
+            files: [...p.files, ...newSrtFiles],
+        }));
+        setSelectedFileId(newSrtFiles[0].id);
+
+        const extraNotices: string[] = [];
+        if ((response.missing_sources?.length || 0) > 0) {
+            extraNotices.push(`${response.missing_sources.length} video thiếu dữ liệu ASR`);
+        }
+        if ((response.errors?.length || 0) > 0) {
+            extraNotices.push(`${response.errors.length} lỗi khi chuyển đổi`);
+        }
+        const statusMessage = [`Đã thêm ${newSrtFiles.length} phụ đề từ ASR.`];
+        if (extraNotices.length > 0) {
+            statusMessage.push(extraNotices.join('. '));
+        }
+        setClipboardMessage(statusMessage.join(' '));
+    } catch (error) {
+        console.error('Failed to generate SRT files from ASR data', error);
+        setClipboardMessage(error instanceof Error ? `Lỗi tạo SRT: ${error.message}` : 'Lỗi tạo SRT từ ASR.');
+    } finally {
+        setIsGeneratingSrts(false);
+    }
+  };
   
     const handleEditVideo = (videoFile: VideoFile) => {
     const srtFileName = videoFile.name.replace(/\.[^/.]+$/, "") + ".srt";
@@ -464,9 +534,17 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                  <div className="text-center text-sm text-gray-400 mb-2">
                     Tổng số token: {isProcessingAnyFile ? <LoadingSpinner className="w-4 h-4 inline-block"/> : totalTokens.toLocaleString()}
                  </div>
-                 <button onClick={handleTranslateAll} disabled={activelyTranslating.size > 0 || isProcessingAnyFile} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:cursor-wait text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2">
+                <button onClick={handleTranslateAll} disabled={activelyTranslating.size > 0 || isProcessingAnyFile} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:cursor-wait text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2">
                     {activelyTranslating.size > 0 ? <LoadingSpinner /> : <TranslateIcon className="w-5 h-5"/>}
                     <span>Dịch Tất Cả</span>
+                </button>
+                <button
+                    onClick={handleGenerateSrtsFromAsr}
+                    disabled={isGeneratingSrts || isProcessingAnyFile}
+                    className="w-full bg-amber-600 hover:bg-amber-700 disabled:bg-amber-800 disabled:cursor-wait text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2"
+                >
+                    {isGeneratingSrts ? <LoadingSpinner /> : <SubtitlesIcon className="w-5 h-5" />}
+                    <span>Tạo SRT từ ASR</span>
                 </button>
                 <button onClick={handleDeleteAllFiles} disabled={project.files.length === 0} className="w-full bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2">
                     <TrashIcon className="w-5 h-5" />

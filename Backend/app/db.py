@@ -96,6 +96,16 @@ class Database:
             conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
             conn.commit()
 
+    def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT data FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["data"])
+
     # --- API keys ------------------------------------------------------------------
     def list_api_keys(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:

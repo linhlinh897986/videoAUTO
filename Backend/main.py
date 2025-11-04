@@ -10,7 +10,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.db import Database
-from app.asr_utils import convert_directory_to_srt
+from app.asr_utils import SUPPORTED_EXTENSIONS, convert_directory_to_srt
+from app.ASR.ASRData import from_subtitle_file
 
 APP_ROOT = Path(__file__).resolve().parent
 DB_PATH = APP_ROOT / "data" / "app.db"
@@ -150,23 +151,29 @@ class AsrExportRequest(BaseModel):
     overwrite: bool = True
 
 
+class ProjectAsrGenerationRequest(BaseModel):
+    source_dir: Optional[str] = None
+    output_dir: Optional[str] = None
+
+
+def _resolve_path(path_value: Optional[str], *, default: Optional[Path] = None) -> Optional[Path]:
+    if not path_value:
+        return default
+    candidate = Path(path_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = (APP_ROOT / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+    return candidate
+
+
 @app.post("/asr/export-srt")
 def export_asr_to_srt(payload: AsrExportRequest) -> Dict[str, Any]:
-    def _resolve(path_value: Optional[str]) -> Optional[Path]:
-        if not path_value:
-            return None
-        candidate = Path(path_value).expanduser()
-        if not candidate.is_absolute():
-            candidate = (APP_ROOT / candidate).resolve()
-        else:
-            candidate = candidate.resolve()
-        return candidate
-
-    source_dir = _resolve(payload.source_dir)
+    source_dir = _resolve_path(payload.source_dir)
     if source_dir is None:
         raise HTTPException(status_code=400, detail="source_dir is required")
 
-    output_dir = _resolve(payload.output_dir) or ASR_ROOT
+    output_dir = _resolve_path(payload.output_dir, default=ASR_ROOT) or ASR_ROOT
 
     try:
         conversion = convert_directory_to_srt(
@@ -185,5 +192,123 @@ def export_asr_to_srt(payload: AsrExportRequest) -> Dict[str, Any]:
         **conversion,
     }
 
+
+@app.post("/projects/{project_id}/asr/generate-missing")
+def generate_missing_project_srts(
+    project_id: str,
+    payload: Optional[ProjectAsrGenerationRequest] = Body(None),
+) -> Dict[str, Any]:
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    project_files = project.get("files") or []
+    video_files = [f for f in project_files if isinstance(f, dict) and f.get("type") == "video"]
+    existing_srt_stems = {
+        Path(f.get("name", "")).stem.lower()
+        for f in project_files
+        if isinstance(f, dict) and f.get("type") == "srt" and f.get("name")
+    }
+
+    if not video_files:
+        return {
+            "status": "ok",
+            "project_id": project_id,
+            "generated": [],
+            "skipped": [],
+            "missing_sources": [],
+            "errors": [],
+            "source_dir": None,
+            "output_dir": None,
+        }
+
+    request_payload = payload or ProjectAsrGenerationRequest()
+    default_source = ASR_ROOT / project_id
+    source_dir = _resolve_path(request_payload.source_dir, default=default_source)
+    if source_dir is None or not source_dir.exists():
+        raise HTTPException(status_code=404, detail=f"ASR source directory not found: {source_dir}")
+
+    output_dir = _resolve_path(request_payload.output_dir, default=source_dir) or source_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    source_index: Dict[str, Path] = {}
+    for candidate in source_dir.rglob("*"):
+        if candidate.is_file() and candidate.suffix.lower() in SUPPORTED_EXTENSIONS:
+            source_index.setdefault(candidate.stem.lower(), candidate)
+
+    generated: List[Dict[str, Any]] = []
+    missing_sources: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    for video in video_files:
+        video_name = video.get("name")
+        video_id = video.get("id")
+        if not video_name or not video_id:
+            continue
+
+        stem = Path(video_name).stem
+        stem_lower = stem.lower()
+
+        if stem_lower in existing_srt_stems:
+            skipped.append(
+                {
+                    "video_id": video_id,
+                    "video_name": video_name,
+                    "reason": "subtitle-already-present",
+                }
+            )
+            continue
+
+        source_file = source_index.get(stem_lower)
+        if source_file is None:
+            missing_sources.append(
+                {
+                    "video_id": video_id,
+                    "video_name": video_name,
+                    "reason": "no-matching-asr",
+                }
+            )
+            continue
+
+        output_path = output_dir / f"{stem}.srt"
+        try:
+            if not output_path.exists():
+                asr_data = from_subtitle_file(str(source_file))
+                asr_data.to_srt(save_path=str(output_path))
+
+            srt_text = output_path.read_text(encoding="utf-8")
+            if not srt_text.strip():
+                raise ValueError("Generated SRT is empty")
+
+            generated.append(
+                {
+                    "video_id": video_id,
+                    "video_name": video_name,
+                    "source": str(source_file),
+                    "output": str(output_path),
+                    "srt_filename": output_path.name,
+                    "srt_content": srt_text,
+                }
+            )
+        except Exception as exc:  # pragma: no cover - defensive for varied ASR inputs
+            errors.append(
+                {
+                    "video_id": video_id,
+                    "video_name": video_name,
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "source_dir": str(source_dir),
+        "output_dir": str(output_dir),
+        "generated": generated,
+        "missing_sources": missing_sources,
+        "skipped": skipped,
+        "errors": errors,
+    }
 
 __all__ = ["app"]

@@ -42,6 +42,36 @@ export interface StoredFileMetadata {
     file_size?: number;
 }
 
+export interface GenerateMissingSrtsResponse {
+    status: string;
+    project_id: string;
+    source_dir: string | null;
+    output_dir: string | null;
+    generated: {
+        video_id: string;
+        video_name: string;
+        source?: string;
+        output?: string;
+        srt_filename?: string;
+        srt_content?: string;
+    }[];
+    missing_sources: {
+        video_id: string;
+        video_name: string;
+        reason?: string;
+    }[];
+    skipped: {
+        video_id: string;
+        video_name: string;
+        reason?: string;
+    }[];
+    errors: {
+        video_id: string;
+        video_name: string;
+        error?: string;
+    }[];
+}
+
 export const saveVideo = async (projectId: string, id: string, file: File): Promise<FileUploadResult> => {
     const formData = new FormData();
     formData.append('file_id', id);
@@ -102,6 +132,19 @@ export const getStoredFileInfo = async (id: string): Promise<StoredFileMetadata 
         throw new Error(message || `Failed to retrieve metadata for file ${id}`);
     }
     return (await response.json()) as StoredFileMetadata;
+};
+
+export const generateMissingSrtsFromAsr = async (projectId: string): Promise<GenerateMissingSrtsResponse> => {
+    const response = await fetch(`${API_BASE_URL}/projects/${projectId}/asr/generate-missing`, {
+        method: 'POST',
+    });
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || 'Không thể tạo phụ đề từ ASR');
+    }
+
+    return (await response.json()) as GenerateMissingSrtsResponse;
 };
 
 // --- DATA ABSTRACTION LAYER (PUBLIC API) ------------------------------------------
