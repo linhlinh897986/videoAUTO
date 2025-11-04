@@ -116,7 +116,7 @@ class ASRData:
         """Convert to SRT subtitle format"""
         srt_text = "\n\n".join(
             f"{n}\n{seg.to_srt_ts()}\n{seg.transcript}"
-            for n, seg in enumerate(self.segments, 1))
+            for n, seg in enumerate(self.segments, 1)) + "\n"
         if save_path:
             with open(save_path, 'w', encoding='utf-8') as f:
                 f.write(srt_text)

@@ -421,6 +421,10 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
             } catch (error) {
                 console.error(`Error counting tokens for ${srtFile.name}:`, error);
                 setProcessingStatus(prev => ({ ...prev, [srtFile.id]: 'Lỗi đếm token' }));
+                // Clear error status after 3 seconds
+                setTimeout(() => {
+                    setProcessingStatus(prev => { const s = {...prev}; delete s[srtFile.id]; return s; });
+                }, 3000);
             }
         }
 

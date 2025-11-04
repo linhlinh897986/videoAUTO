@@ -38,8 +38,8 @@ ensure_python_env() {
 ensure_ffmpeg() {
     if ! command -v ffmpeg >/dev/null 2>&1; then
         log "ffmpeg not found. Installing via apt-get (this can take a minute)"
-        apt-get update >/dev/null
-        apt-get install -y ffmpeg >/dev/null
+        sudo apt-get update >/dev/null 2>&1 || apt-get update >/dev/null 2>&1
+        sudo apt-get install -y ffmpeg >/dev/null 2>&1 || apt-get install -y ffmpeg >/dev/null 2>&1
     fi
     
     if ! command -v ffmpeg >/dev/null 2>&1; then
