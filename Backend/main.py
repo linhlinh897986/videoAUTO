@@ -669,7 +669,7 @@ async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[
                     "subtitle_id": subtitle_id,
                     "text": text,
                     "duration": result.get("duration", 0) / 1000.0,  # Convert ms to seconds
-                    "track": next_track + idx,
+                    "track": next_track,  # All TTS blocks on same track
                     "start_time": start_seconds,
                     "storage_path": str(storage_path),
                     "file_size": file_size,
