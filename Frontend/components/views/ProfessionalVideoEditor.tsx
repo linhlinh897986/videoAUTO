@@ -9,6 +9,7 @@ import StyleEditor from '../editor/StyleEditor';
 import Timeline from '../editor/Timeline';
 import EditorControls from '../editor/EditorControls';
 import { useHistoryState } from '../../hooks/useHistoryState';
+import { generateBatchTTS, listTTSVoices, TTSVoice } from '../../services/ttsService';
 import Tesseract from 'tesseract.js';
 
 
@@ -90,6 +91,9 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
+  const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
+  const [ttsVoices, setTtsVoices] = useState<TTSVoice[]>([]);
+  const [selectedTtsVoice, setSelectedTtsVoice] = useState<string>("BV421_vivn_streaming");
 
   const maxSubtitleEndTime = useMemo(() => {
     if (subtitles.length === 0) return 0;
@@ -872,6 +876,74 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
         onUpdateProject(project.id, { subtitleStyle: newStyle });
     };
 
+    // Load TTS voices on mount
+    useEffect(() => {
+        listTTSVoices()
+            .then(voices => setTtsVoices(voices))
+            .catch(err => console.error('Failed to load TTS voices:', err));
+    }, []);
+
+    const handleGenerateTTS = async (subtitles: SubtitleBlock[]) => {
+        if (subtitles.length === 0) {
+            alert('Không có phụ đề để tạo TTS');
+            return;
+        }
+
+        // Filter out empty subtitles
+        const validSubtitles = subtitles.filter(sub => sub.text.trim().length > 0);
+        if (validSubtitles.length === 0) {
+            alert('Không có phụ đề hợp lệ (tất cả đều trống)');
+            return;
+        }
+
+        setIsGeneratingTTS(true);
+        try {
+            const response = await generateBatchTTS(project.id, validSubtitles, selectedTtsVoice);
+            
+            if (response.errors.length > 0) {
+                console.warn('Some TTS generations failed:', response.errors);
+            }
+
+            if (response.generated.length === 0) {
+                alert('Không thể tạo TTS cho bất kỳ phụ đề nào. Vui lòng kiểm tra log.');
+                return;
+            }
+
+            // Create AudioFile objects for the generated TTS
+            const newAudioFiles: AudioFile[] = response.generated.map(item => ({
+                id: item.file_id,
+                name: item.filename,
+                type: 'audio',
+                startTime: item.start_time,
+                track: item.track,
+                storagePath: item.storage_path,
+                fileSize: item.file_size,
+                uploadedAt: item.created_at,
+                duration: item.duration,
+            }));
+
+            // Update editor state with new audio files
+            const updateFn = (prevState: EditorState) => ({
+                ...prevState,
+                audioFiles: [...prevState.audioFiles, ...newAudioFiles]
+            });
+            setLiveEditorState(updateFn);
+            setEditorState(updateFn);
+
+            // Also update project files
+            onUpdateProject(project.id, p => ({
+                files: [...p.files, ...newAudioFiles]
+            }));
+
+            alert(`Đã tạo thành công ${response.generated.length} track TTS!${response.errors.length > 0 ? ` (${response.errors.length} lỗi)` : ''}`);
+        } catch (error) {
+            console.error('Failed to generate TTS:', error);
+            alert(`Lỗi khi tạo TTS: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setIsGeneratingTTS(false);
+        }
+    };
+
   return (
     <div ref={editorContainerRef} className="bg-gray-900 text-white h-screen flex flex-col overflow-hidden">
       <header className="bg-gray-800 p-2 flex items-center justify-between border-b border-gray-700 flex-shrink-0 z-20">
@@ -961,6 +1033,8 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
                               activeSubtitleId={activeSubtitleId}
                               onSubtitleClick={(sub) => handleSeek(srtTimeToSeconds(sub.startTime))}
                               onUpdateSubtitle={handleUpdateSubtitle}
+                              onGenerateTTS={handleGenerateTTS}
+                              isGeneratingTTS={isGeneratingTTS}
                           />
                       )}
                       {activeRightTab === 'style' && (

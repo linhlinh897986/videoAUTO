@@ -16,6 +16,8 @@ from app.db import Database
 from app.asr_utils import SUPPORTED_EXTENSIONS, convert_directory_to_srt
 from app.ASR.ASRData import from_subtitle_file
 from app.ASR import transcribe
+from app.TTS import clines as tts_engine
+from app.TTS.constants import voices as tts_voices, sessionid as tts_sessionids
 
 APP_ROOT = Path(__file__).resolve().parent
 DB_PATH = APP_ROOT / "data" / "app.db"
@@ -499,5 +501,165 @@ def generate_missing_project_srts(
         "skipped": skipped,
         "errors": errors,
     }
+
+
+# --- TTS (Text-to-Speech) ------------------------------------------------------
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = "BV421_vivn_streaming"  # Default Vietnamese voice
+    session_id: Optional[str] = None
+
+
+class TTSBatchRequest(BaseModel):
+    """Generate TTS for multiple subtitle blocks"""
+    subtitles: List[Dict[str, Any]]  # List of subtitle objects with id, text, startTime, endTime
+    voice: str = "BV421_vivn_streaming"
+    session_id: Optional[str] = None
+
+
+@app.get("/tts/voices")
+def list_tts_voices() -> List[Dict[str, str]]:
+    """List available TTS voices"""
+    return [{"name": name, "id": voice_id} for name, voice_id in tts_voices]
+
+
+@app.post("/tts/generate")
+def generate_tts(payload: TTSRequest) -> Dict[str, Any]:
+    """Generate TTS audio from text"""
+    session_id = payload.session_id or tts_sessionids[0]
+    
+    # Create temp file for TTS output
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+        temp_path = Path(tmp_file.name)
+    
+    try:
+        # Generate TTS
+        result = tts_engine.tts(
+            session_id=session_id,
+            text_speaker=payload.voice,
+            req_text=payload.text,
+            filename=str(temp_path),
+            play=False
+        )
+        
+        if result.get("status_code") != 0:
+            raise HTTPException(status_code=400, detail=f"TTS generation failed: {result.get('status')}")
+        
+        # Read the generated MP3
+        audio_data = temp_path.read_bytes()
+        
+        return {
+            "status": "success",
+            "duration": result.get("duration", 0),
+            "audio_data": audio_data.hex(),  # Return as hex string
+            "size": len(audio_data),
+        }
+    finally:
+        # Clean up temp file
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+@app.post("/projects/{project_id}/tts/batch")
+async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[str, Any]:
+    """Generate TTS for multiple subtitles and save as audio files in the project"""
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    
+    session_id = payload.session_id or tts_sessionids[0]
+    generated_files: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    
+    # Get existing audio files to determine next track number
+    project_files = project.get("files") or []
+    existing_audio_files = [f for f in project_files if isinstance(f, dict) and f.get("type") == "audio"]
+    next_track = max([f.get("track", 0) for f in existing_audio_files], default=-1) + 1
+    
+    for idx, subtitle in enumerate(payload.subtitles):
+        try:
+            text = subtitle.get("text", "").strip()
+            if not text:
+                continue
+            
+            subtitle_id = subtitle.get("id")
+            start_time = subtitle.get("startTime", "00:00:00,000")
+            
+            # Generate unique file ID
+            file_id = f"tts-{project_id}-{subtitle_id}-{dt.datetime.utcnow().timestamp()}"
+            filename = f"tts_subtitle_{subtitle_id}.mp3"
+            
+            # Create temp file for TTS
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+                temp_path = Path(tmp_file.name)
+            
+            try:
+                # Generate TTS using synthesize_long_text for better handling of long text
+                result = tts_engine.synthesize_long_text(
+                    session_id=session_id,
+                    text_speaker=payload.voice,
+                    text=text,
+                    output_filename=str(temp_path),
+                    chunk_size=200,
+                    keep_chunks=False,
+                    play=False
+                )
+                
+                if result.get("status_code") != 0:
+                    errors.append({
+                        "subtitle_id": subtitle_id,
+                        "error": f"TTS failed: {result.get('status')}",
+                    })
+                    continue
+                
+                # Read generated audio
+                audio_data = temp_path.read_bytes()
+                
+                # Save to database
+                created_at = dt.datetime.utcnow().isoformat()
+                storage_path, file_size = db.save_file(
+                    file_id=file_id,
+                    project_id=project_id,
+                    filename=filename,
+                    content_type="audio/mpeg",
+                    data=audio_data,
+                    created_at=created_at,
+                )
+                
+                # Convert start time to seconds
+                time_parts = start_time.replace(',', '.').split(':')
+                start_seconds = float(time_parts[0]) * 3600 + float(time_parts[1]) * 60 + float(time_parts[2])
+                
+                generated_files.append({
+                    "file_id": file_id,
+                    "filename": filename,
+                    "subtitle_id": subtitle_id,
+                    "text": text,
+                    "duration": result.get("duration", 0) / 1000.0,  # Convert ms to seconds
+                    "track": next_track + idx,
+                    "start_time": start_seconds,
+                    "storage_path": str(storage_path),
+                    "file_size": file_size,
+                    "created_at": created_at,
+                })
+            finally:
+                if temp_path.exists():
+                    temp_path.unlink()
+                    
+        except Exception as exc:
+            errors.append({
+                "subtitle_id": subtitle.get("id"),
+                "error": str(exc),
+            })
+    
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "generated": generated_files,
+        "errors": errors,
+        "voice": payload.voice,
+    }
+
 
 __all__ = ["app"]

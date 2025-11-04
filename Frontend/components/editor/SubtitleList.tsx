@@ -1,15 +1,25 @@
 import React, { useRef, useEffect } from 'react';
 import { SubtitleBlock } from '../../types';
 import { srtTimeToSeconds } from '../../services/srtParser';
+import { TTSIcon } from '../ui/Icons';
 
 interface SubtitleEditorProps {
     subtitles: SubtitleBlock[];
     activeSubtitleId: number | undefined;
     onSubtitleClick: (sub: SubtitleBlock) => void;
     onUpdateSubtitle: (id: number, newSub: Partial<SubtitleBlock>) => void;
+    onGenerateTTS?: (subtitles: SubtitleBlock[]) => void;
+    isGeneratingTTS?: boolean;
 }
 
-const SubtitleEditor: React.FC<SubtitleEditorProps> = ({ subtitles, activeSubtitleId, onSubtitleClick, onUpdateSubtitle }) => {
+const SubtitleEditor: React.FC<SubtitleEditorProps> = ({ 
+    subtitles, 
+    activeSubtitleId, 
+    onSubtitleClick, 
+    onUpdateSubtitle,
+    onGenerateTTS,
+    isGeneratingTTS = false,
+}) => {
     const activeSubtitleRef = useRef<HTMLDivElement>(null);
     
     useEffect(() => {
@@ -27,7 +37,22 @@ const SubtitleEditor: React.FC<SubtitleEditorProps> = ({ subtitles, activeSubtit
 
     return (
         <div className="w-full h-full flex flex-col bg-gray-800/50">
-            <h3 className="p-2 text-lg font-semibold border-b border-gray-700 flex-shrink-0 text-center">Trình Chỉnh Sửa Phụ Đề</h3>
+            <div className="p-2 border-b border-gray-700 flex-shrink-0">
+                <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-lg font-semibold text-center flex-1">Trình Chỉnh Sửa Phụ Đề</h3>
+                </div>
+                {onGenerateTTS && (
+                    <button
+                        onClick={() => onGenerateTTS(subtitles)}
+                        disabled={isGeneratingTTS || subtitles.length === 0}
+                        className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2"
+                        title="Tạo TTS cho tất cả phụ đề"
+                    >
+                        <TTSIcon className="w-5 h-5" />
+                        <span>{isGeneratingTTS ? 'Đang tạo TTS...' : 'Tạo TTS Tất Cả'}</span>
+                    </button>
+                )}
+            </div>
             <div className="flex-grow overflow-y-auto p-2 space-y-2">
                 {subtitles.map(sub => (
                     <div 
