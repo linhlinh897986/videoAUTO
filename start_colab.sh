@@ -25,15 +25,14 @@ cleanup_process() {
 }
 
 ensure_python_env() {
-    if [ ! -d "$ROOT_DIR/.venv" ]; then
-        log "Creating Python virtual environment"
-        python3 -m venv "$ROOT_DIR/.venv"
+    if ! command -v python3 >/dev/null 2>&1; then
+        log "Python 3 is required but was not found. Aborting."
+        exit 1
     fi
 
-    source "$ROOT_DIR/.venv/bin/activate"
     log "Installing backend dependencies"
-    pip install --upgrade pip >/dev/null
-    pip install -r "$ROOT_DIR/Backend/requirements.txt"
+    python3 -m pip install --upgrade pip >/dev/null
+    python3 -m pip install -r "$ROOT_DIR/Backend/requirements.txt"
 }
 
 ensure_node() {
@@ -77,7 +76,7 @@ CFG
 start_backend() {
     cleanup_process "uvicorn.*main:app"
     log "Starting FastAPI backend on port $BACKEND_PORT"
-    (cd "$ROOT_DIR/Backend" && nohup "$ROOT_DIR/.venv/bin/python" -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" > "$LOG_DIR/backend.log" 2>&1 &)
+    (cd "$ROOT_DIR/Backend" && nohup python3 -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" > "$LOG_DIR/backend.log" 2>&1 &)
 }
 
 start_ngrok() {
@@ -103,7 +102,7 @@ start_ngrok() {
 
 extract_ngrok_url() {
     local tunnel_name="$1"
-    curl -sS http://127.0.0.1:4040/api/tunnels | "$ROOT_DIR/.venv/bin/python" - "$tunnel_name" <<'PY'
+    curl -sS http://127.0.0.1:4040/api/tunnels | python3 - "$tunnel_name" <<'PY'
 import json
 import sys
 
