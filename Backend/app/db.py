@@ -155,7 +155,8 @@ class Database:
             raise ValueError("File ID must be provided")
 
         # Persist file on disk: data/{project_id}/files/{filename}
-        safe_filename = Path(file_id).name or filename
+        # Use filename parameter for the actual file, sanitize it for safety
+        safe_filename = Path(filename).name
         project_folder = project_id or "unassigned"
         target_dir = self._data_root / project_folder / "files"
         target_dir.mkdir(parents=True, exist_ok=True)
