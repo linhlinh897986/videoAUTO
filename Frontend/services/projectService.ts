@@ -113,6 +113,9 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
     return URL.createObjectURL(blob);
 };
 
+// Alias for getVideoUrl - works for any file type (video, audio, etc.)
+export const getFileUrl = getVideoUrl;
+
 export const deleteVideo = async (id: string): Promise<void> => {
     const response = await fetch(`${API_BASE_URL}/files/${id}`, { method: 'DELETE' });
     if (!response.ok && response.status !== 404) {
