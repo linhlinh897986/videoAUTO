@@ -1,132 +1,109 @@
 import { Project, CustomStyle, ApiKey } from '../types';
 import { encrypt, decrypt } from './encryptionService';
 
-// --- LOCAL STORAGE HELPERS ---
-const getFromLS = <T>(key: string, defaultValue: T): T => {
-    try {
-        const item = window.localStorage.getItem(key);
-        return item ? JSON.parse(item) : defaultValue;
-    } catch {
-        return defaultValue;
-    }
-};
-const saveToLS = <T>(key: string, value: T): void => {
-    window.localStorage.setItem(key, JSON.stringify(value));
-};
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
-// --- IndexedDB for Video Storage ---
-const DB_NAME = 'VideoStorage';
-const STORE_NAME = 'videos';
-let dbPromise: Promise<IDBDatabase> | null = null;
-
-const openDB = (): Promise<IDBDatabase> => {
-    if (dbPromise) {
-        return dbPromise;
-    }
-    dbPromise = new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, 1);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-        request.onupgradeneeded = (event) => {
-            const db = (event.target as IDBOpenDBRequest).result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME);
-            }
-        };
+const jsonFetch = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...(options.headers || {}),
+        },
     });
-    return dbPromise;
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Request to ${path} failed with status ${response.status}`);
+    }
+
+    if (response.status === 204) {
+        return undefined as T;
+    }
+
+    return (await response.json()) as T;
 };
 
-export const saveVideo = async (id: string, file: File): Promise<void> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.put(file, id);
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error);
+// --- FILE STORAGE HELPERS ---------------------------------------------------------
+export const saveVideo = async (projectId: string, id: string, file: File): Promise<void> => {
+    const formData = new FormData();
+    formData.append('file_id', id);
+    formData.append('project_id', projectId);
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/files`, {
+        method: 'POST',
+        body: formData,
     });
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Failed to upload file ${id}`);
+    }
 };
 
 export const getVideoUrl = async (id: string): Promise<string | null> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_NAME, 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.get(id);
-        request.onsuccess = () => {
-            if (request.result) {
-                const url = URL.createObjectURL(request.result);
-                resolve(url);
-            } else {
-                resolve(null);
-            }
-        };
-        request.onerror = () => reject(request.error);
-    });
+    const response = await fetch(`${API_BASE_URL}/files/${id}`);
+    if (response.status === 404) {
+        return null;
+    }
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Failed to load file ${id}`);
+    }
+
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
 };
 
 export const deleteVideo = async (id: string): Promise<void> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.delete(id);
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error);
+    const response = await fetch(`${API_BASE_URL}/files/${id}`, { method: 'DELETE' });
+    if (!response.ok && response.status !== 404) {
+        const message = await response.text();
+        throw new Error(message || `Failed to delete file ${id}`);
+    }
+};
+
+// --- DATA ABSTRACTION LAYER (PUBLIC API) ------------------------------------------
+export const init = async (): Promise<{ projects: Project[], apiKeys: ApiKey[], customStyles: CustomStyle[] }> => {
+    const [projects, encryptedKeys, customStyles] = await Promise.all([
+        jsonFetch<Project[]>('/projects'),
+        jsonFetch<ApiKey[]>('/api-keys'),
+        jsonFetch<CustomStyle[]>('/custom-styles'),
+    ]);
+
+    const decryptedKeys = encryptedKeys.map(key => ({ ...key, value: decrypt(key.value) }));
+    return { projects, apiKeys: decryptedKeys, customStyles };
+};
+
+export const saveProject = async (project: Project): Promise<void> => {
+    await jsonFetch(`/projects/${project.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(project),
     });
 };
 
-
-// --- DATA ABSTRACTION LAYER (PUBLIC API) ---
-
-export const init = async (): Promise<{ projects: Project[], apiKeys: ApiKey[], customStyles: CustomStyle[] }> => {
-    console.log("Initializing data from Local Storage.");
-    const projects = getFromLS<Project[]>('srt-translator-projects', []);
-    const encryptedApiKeys = getFromLS<ApiKey[]>('gemini-api-keys-v2', []);
-    const apiKeys = encryptedApiKeys.map(key => ({ ...key, value: decrypt(key.value) }));
-    const customStyles = getFromLS<CustomStyle[]>('srt-translator-custom-styles', []);
-    return { projects, apiKeys, customStyles };
+export const deleteProject = async (projectId: string): Promise<void> => {
+    await jsonFetch(`/projects/${projectId}`, { method: 'DELETE' });
 };
 
-export const saveProject = (project: Project): void => {
-    const projects = getFromLS<Project[]>('srt-translator-projects', []);
-    const projectIndex = projects.findIndex(p => p.id === project.id);
-    if (projectIndex > -1) {
-        projects[projectIndex] = project;
-    } else {
-        projects.push(project);
-    }
-    saveToLS('srt-translator-projects', projects);
-};
-
-export const deleteProject = (projectId: string): void => {
-    const projects = getFromLS<Project[]>('srt-translator-projects', []);
-    const projectToDelete = projects.find(p => p.id === projectId);
-
-    if (projectToDelete) {
-        projectToDelete.files.forEach(file => {
-            if (file.type === 'video' || file.type === 'audio') {
-                deleteVideo(file.id).catch(err => console.error(`Failed to delete media ${file.id} from IDB`, err));
-            }
-        });
-    }
-    
-    const projectsToKeep = projects.filter(p => p.id !== projectId);
-    saveToLS('srt-translator-projects', projectsToKeep);
-};
-
-export const saveApiKeys = (keys: ApiKey[]): void => {
+export const saveApiKeys = async (keys: ApiKey[]): Promise<void> => {
     const encryptedKeys = keys.map(key => ({ ...key, value: encrypt(key.value) }));
-    saveToLS('gemini-api-keys-v2', encryptedKeys);
+    await jsonFetch('/api-keys', {
+        method: 'PUT',
+        body: JSON.stringify(encryptedKeys),
+    });
 };
 
 export const getApiKeys = async (): Promise<ApiKey[]> => {
-    const encryptedKeys = getFromLS<ApiKey[]>('gemini-api-keys-v2', []);
-    const decryptedKeys = encryptedKeys.map(key => ({ ...key, value: decrypt(key.value) }));
-    return Promise.resolve(decryptedKeys);
+    const encryptedKeys = await jsonFetch<ApiKey[]>('/api-keys');
+    return encryptedKeys.map(key => ({ ...key, value: decrypt(key.value) }));
 };
 
-export const saveCustomStyles = (styles: CustomStyle[]): void => {
-    saveToLS('srt-translator-custom-styles', styles);
+export const saveCustomStyles = async (styles: CustomStyle[]): Promise<void> => {
+    await jsonFetch('/custom-styles', {
+        method: 'PUT',
+        body: JSON.stringify(styles),
+    });
 };

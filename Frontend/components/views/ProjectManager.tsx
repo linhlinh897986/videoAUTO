@@ -5,8 +5,8 @@ import { PlusIcon, TrashIcon, ArrowRightIcon } from '../ui/Icons';
 interface ProjectManagerProps {
   projects: Project[];
   onSelectProject: (id: string) => void;
-  onAddProject: (name: string) => void;
-  onDeleteProject: (id: string) => void;
+  onAddProject: (name: string) => void | Promise<void>;
+  onDeleteProject: (id: string) => void | Promise<void>;
 }
 
 const ProjectManager: React.FC<ProjectManagerProps> = ({ projects, onSelectProject, onAddProject, onDeleteProject }) => {
@@ -15,7 +15,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ projects, onSelectProje
   const handleAddProject = (e: React.FormEvent) => {
     e.preventDefault();
     if (newProjectName.trim()) {
-      onAddProject(newProjectName.trim());
+      void onAddProject(newProjectName.trim());
       setNewProjectName('');
     }
   };
@@ -58,7 +58,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ projects, onSelectProje
                             <span className="font-medium text-lg">{project.name}</span>
                             <div className="flex items-center space-x-3">
                                 <button
-                                    onClick={() => onDeleteProject(project.id)}
+                                    onClick={() => void onDeleteProject(project.id)}
                                     className="text-gray-400 hover:text-red-500 transition"
                                     aria-label={`Xóa ${project.name}`}
                                 >

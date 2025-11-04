@@ -130,7 +130,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
     for (const { file, videoInfo } of newVideoFiles) {
         try {
             setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Đang lưu video...' }));
-            await saveVideo(videoInfo.id, file);
+            await saveVideo(project.id, videoInfo.id, file);
             const videoUrl = await getVideoUrl(videoInfo.id);
 
             if (videoUrl) {
@@ -168,7 +168,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
     for (const { file, audioInfo } of newAudioFiles) {
         try {
             setProcessingStatus(prev => ({ ...prev, [audioInfo.id]: 'Đang lưu audio...' }));
-            await saveVideo(audioInfo.id, file);
+            await saveVideo(project.id, audioInfo.id, file);
             const audioUrl = await getVideoUrl(audioInfo.id);
 
             if (audioUrl) {

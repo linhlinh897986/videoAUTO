@@ -1,0 +1,13 @@
+# Node
+Frontend/node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+.env.*
+
+# Database files
+Backend/data/
