@@ -580,6 +580,29 @@ async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[
     existing_audio_files = [f for f in project_files if isinstance(f, dict) and f.get("type") == "audio"]
     next_track = max([f.get("track", 0) for f in existing_audio_files], default=-1) + 1
     
+    # Helper function to check if two time ranges overlap
+    def overlaps(start1: float, end1: float, start2: float, end2: float) -> bool:
+        return start1 < end2 and start2 < end1
+    
+    # Helper function to find available track for a new block
+    def find_available_track(new_start: float, new_duration: float, generated_so_far: List[Dict]) -> int:
+        new_end = new_start + new_duration
+        track = next_track
+        
+        while True:
+            # Check if this track is free for the time range
+            has_overlap = False
+            for existing in generated_so_far:
+                if existing["track"] == track:
+                    existing_end = existing["start_time"] + existing["duration"]
+                    if overlaps(new_start, new_end, existing["start_time"], existing_end):
+                        has_overlap = True
+                        break
+            
+            if not has_overlap:
+                return track
+            track += 1
+    
     for idx, subtitle in enumerate(payload.subtitles):
         try:
             text = subtitle.get("text", "").strip()
@@ -663,13 +686,19 @@ async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[
                 time_parts = start_time.replace(',', '.').split(':')
                 start_seconds = float(time_parts[0]) * 3600 + float(time_parts[1]) * 60 + float(time_parts[2])
                 
+                # Calculate duration
+                duration_seconds = result.get("duration", 0) / 1000.0  # Convert ms to seconds
+                
+                # Find available track (auto-move to lower track if overlap detected)
+                assigned_track = find_available_track(start_seconds, duration_seconds, generated_files)
+                
                 generated_files.append({
                     "file_id": file_id,
                     "filename": filename,
                     "subtitle_id": subtitle_id,
                     "text": text,
-                    "duration": result.get("duration", 0) / 1000.0,  # Convert ms to seconds
-                    "track": next_track,  # All TTS blocks on same track
+                    "duration": duration_seconds,
+                    "track": assigned_track,  # Auto-assigned track (may be pushed down if overlap)
                     "start_time": start_seconds,
                     "storage_path": str(storage_path),
                     "file_size": file_size,

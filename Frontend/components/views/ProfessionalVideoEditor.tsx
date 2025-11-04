@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Project, VideoFile, SrtFile, SubtitleBlock, VideoSegment, BoundingBox, SubtitleStyle, AudioFile } from '../../types';
-import { getVideoUrl } from '../../services/projectService';
+import { getVideoUrl, getFileUrl } from '../../services/projectService';
 import { srtTimeToSeconds, secondsToSrtTime } from '../../services/srtParser';
 import { BackArrowIcon, ChevronLeftIcon, ChevronRightIcon } from '../ui/Icons';
 import VideoPlayer from '../editor/VideoPlayer';
@@ -88,6 +88,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
 
   
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
@@ -565,6 +566,41 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   const handlePlay = useCallback(() => setIsPlaying(true), []);
   const handlePause = useCallback(() => setIsPlaying(false), []);
   
+  // Create and manage audio elements for TTS files
+  useEffect(() => {
+    const audioMap = audioElementsRef.current;
+    
+    // Remove audio elements for deleted files
+    const currentFileIds = new Set(audioFiles.map(f => f.id));
+    for (const [id, audio] of audioMap.entries()) {
+      if (!currentFileIds.has(id)) {
+        audio.pause();
+        audio.src = '';
+        audioMap.delete(id);
+      }
+    }
+    
+    // Create audio elements for new files
+    for (const audioFile of audioFiles) {
+      if (!audioMap.has(audioFile.id)) {
+        const audio = new Audio();
+        const audioUrl = getFileUrl(project.id, audioFile.id, audioFile.name);
+        audio.src = audioUrl;
+        audio.preload = 'auto';
+        audioMap.set(audioFile.id, audio);
+      }
+    }
+    
+    return () => {
+      // Cleanup on unmount
+      for (const audio of audioMap.values()) {
+        audio.pause();
+        audio.src = '';
+      }
+      audioMap.clear();
+    };
+  }, [audioFiles, project.id]);
+  
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -597,6 +633,41 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         if (currentPlaybackRate !== rateForCurrentPos) {
             setCurrentPlaybackRate(rateForCurrentPos);
         }
+        
+        // Handle audio playback for TTS files
+        if (timelineTime !== null) {
+            const audioMap = audioElementsRef.current;
+            for (const audioFile of audioFiles) {
+                const audio = audioMap.get(audioFile.id);
+                if (!audio) continue;
+                
+                const audioStart = audioFile.startTime;
+                const audioEnd = audioStart + (audioFile.duration || 0);
+                const isInRange = timelineTime >= audioStart && timelineTime < audioEnd;
+                
+                if (isInRange && !video.paused) {
+                    // Should be playing
+                    const audioTime = timelineTime - audioStart;
+                    if (audio.paused || Math.abs(audio.currentTime - audioTime) > 0.2) {
+                        audio.currentTime = audioTime;
+                        audio.play().catch(err => console.warn('Audio play failed:', err));
+                    }
+                } else {
+                    // Should not be playing
+                    if (!audio.paused) {
+                        audio.pause();
+                    }
+                }
+            }
+        } else {
+            // Outside any segment - pause all audio
+            const audioMap = audioElementsRef.current;
+            for (const audio of audioMap.values()) {
+                if (!audio.paused) {
+                    audio.pause();
+                }
+            }
+        }
 
         if (!video.paused && !video.seeking) {
             if (!currentSegment) {
@@ -618,7 +689,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     return () => {
         cancelAnimationFrame(animationFrameId);
     };
-  }, [segments, mapSourceToTimelineTime, isSeeking, currentPlaybackRate, timelineVisualDuration]);
+  }, [segments, mapSourceToTimelineTime, isSeeking, currentPlaybackRate, timelineVisualDuration, audioFiles, project.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
