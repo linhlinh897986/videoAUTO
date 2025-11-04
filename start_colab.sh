@@ -102,12 +102,21 @@ start_ngrok() {
 
 extract_ngrok_url() {
     local tunnel_name="$1"
-    curl -sS http://127.0.0.1:4040/api/tunnels | python3 - "$tunnel_name" <<'PY'
+    python3 - "$tunnel_name" <<'PY'
 import json
 import sys
+from urllib.request import urlopen
+from urllib.error import URLError
 
-data = json.load(sys.stdin)
 target = sys.argv[1]
+
+try:
+    with urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as response:
+        payload = response.read()
+    data = json.loads(payload.decode("utf-8"))
+except (URLError, TimeoutError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+    sys.exit(0)
+
 for tunnel in data.get("tunnels", []):
     if tunnel.get("name") == target:
         print(tunnel.get("public_url", ""))
