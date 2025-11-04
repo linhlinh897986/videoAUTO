@@ -221,8 +221,8 @@ export interface ImportVideosResponse {
     message?: string;
 }
 
-export const scanVideoFolder = async (): Promise<ScanVideoFolderResponse> => {
-    return await jsonFetch<ScanVideoFolderResponse>('/videos/scan-folder');
+export const scanVideoFolder = async (projectId: string): Promise<ScanVideoFolderResponse> => {
+    return await jsonFetch<ScanVideoFolderResponse>(`/projects/${projectId}/videos/scan-folder`);
 };
 
 export const importVideosFromFolder = async (projectId: string): Promise<ImportVideosResponse> => {

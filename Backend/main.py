@@ -21,11 +21,9 @@ from app.TTS.constants import voices as tts_voices, sessionid as tts_sessionids
 
 APP_ROOT = Path(__file__).resolve().parent
 DB_PATH = APP_ROOT / "data" / "app.db"
-ASR_ROOT = APP_ROOT / "data" / "asr"
-VIDEO_FOLDER = APP_ROOT / "Video"  # Folder to scan for videos to auto-import
+DATA_ROOT = APP_ROOT / "data"
 
-ASR_ROOT.mkdir(parents=True, exist_ok=True)
-VIDEO_FOLDER.mkdir(parents=True, exist_ok=True)
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
 db = Database(DB_PATH)
 
@@ -181,7 +179,9 @@ def export_asr_to_srt(payload: AsrExportRequest) -> Dict[str, Any]:
     if source_dir is None:
         raise HTTPException(status_code=400, detail="source_dir is required")
 
-    output_dir = _resolve_path(payload.output_dir, default=ASR_ROOT) or ASR_ROOT
+    # Default to data/asr if no output_dir specified
+    default_asr = DATA_ROOT / "asr"
+    output_dir = _resolve_path(payload.output_dir, default=default_asr) or default_asr
 
     try:
         conversion = convert_directory_to_srt(
@@ -329,7 +329,8 @@ def generate_missing_project_srts(
         }
 
     request_payload = payload or ProjectAsrGenerationRequest()
-    default_source = ASR_ROOT / project_id
+    # Use data/{project_id}/asr folder
+    default_source = DATA_ROOT / project_id / "asr"
     source_dir = _resolve_path(request_payload.source_dir, default=default_source)
     if source_dir is None:
         source_dir = default_source
@@ -666,21 +667,21 @@ async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[
 
 # --- Video Auto-Import ---------------------------------------------------------
 
-@app.get("/videos/scan-folder")
-def scan_video_folder() -> Dict[str, Any]:
-    """Scan the Video folder for video files to import"""
+@app.get("/projects/{project_id}/videos/scan-folder")
+def scan_project_video_folder(project_id: str) -> Dict[str, Any]:
+    """Scan the project's Video folder for video files to import"""
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    
     supported_extensions = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
     found_videos: List[Dict[str, Any]] = []
     
-    if not VIDEO_FOLDER.exists():
-        return {
-            "status": "ok",
-            "videos": [],
-            "folder": str(VIDEO_FOLDER),
-            "message": "Video folder does not exist"
-        }
+    # Use data/{project_id}/Video folder
+    project_video_folder = DATA_ROOT / project_id / "Video"
+    project_video_folder.mkdir(parents=True, exist_ok=True)
     
-    for video_file in VIDEO_FOLDER.iterdir():
+    for video_file in project_video_folder.iterdir():
         if video_file.is_file() and video_file.suffix.lower() in supported_extensions:
             found_videos.append({
                 "filename": video_file.name,
@@ -691,14 +692,14 @@ def scan_video_folder() -> Dict[str, Any]:
     return {
         "status": "ok",
         "videos": found_videos,
-        "folder": str(VIDEO_FOLDER),
+        "folder": str(project_video_folder),
         "count": len(found_videos),
     }
 
 
 @app.post("/projects/{project_id}/videos/import-from-folder")
 async def import_videos_from_folder(project_id: str) -> Dict[str, Any]:
-    """Import all videos from the Video folder into the specified project"""
+    """Import all videos from the project's Video folder into the specified project"""
     project = db.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -707,15 +708,11 @@ async def import_videos_from_folder(project_id: str) -> Dict[str, Any]:
     imported_videos: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
     
-    if not VIDEO_FOLDER.exists():
-        return {
-            "status": "ok",
-            "imported": [],
-            "errors": [],
-            "message": "Video folder does not exist"
-        }
+    # Use data/{project_id}/Video folder
+    project_video_folder = DATA_ROOT / project_id / "Video"
+    project_video_folder.mkdir(parents=True, exist_ok=True)
     
-    for video_file in VIDEO_FOLDER.iterdir():
+    for video_file in project_video_folder.iterdir():
         if not video_file.is_file() or video_file.suffix.lower() not in supported_extensions:
             continue
         
