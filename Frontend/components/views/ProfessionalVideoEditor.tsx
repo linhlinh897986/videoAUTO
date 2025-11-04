@@ -889,10 +889,10 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
             return;
         }
 
-        // Filter out empty subtitles
+        // Filter out empty subtitles (using translated text)
         const validSubtitles = subtitles.filter(sub => sub.text.trim().length > 0);
         if (validSubtitles.length === 0) {
-            alert('Không có phụ đề hợp lệ (tất cả đều trống)');
+            alert('Không có phụ đề bản dịch hợp lệ (tất cả đều trống)');
             return;
         }
 
@@ -905,7 +905,7 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
             }
 
             if (response.generated.length === 0) {
-                alert('Không thể tạo TTS cho bất kỳ phụ đề nào. Vui lòng kiểm tra log.');
+                alert('Không thể tạo TTS cho bất kỳ phụ đề nào. Vui lòng kiểm tra log và đảm bảo backend đang chạy.');
                 return;
             }
 
@@ -935,10 +935,15 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
                 files: [...p.files, ...newAudioFiles]
             }));
 
-            alert(`Đã tạo thành công ${response.generated.length} track TTS!${response.errors.length > 0 ? ` (${response.errors.length} lỗi)` : ''}`);
+            alert(`Đã tạo thành công ${response.generated.length} track TTS từ bản dịch!${response.errors.length > 0 ? ` (${response.errors.length} lỗi)` : ''}`);
         } catch (error) {
             console.error('Failed to generate TTS:', error);
-            alert(`Lỗi khi tạo TTS: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+            if (errorMsg.includes('Failed to fetch') || errorMsg.includes('ERR_CONNECTION_REFUSED')) {
+                alert('Lỗi kết nối: Backend không chạy. Vui lòng khởi động backend (uvicorn) trước khi tạo TTS.');
+            } else {
+                alert(`Lỗi khi tạo TTS: ${errorMsg}`);
+            }
         } finally {
             setIsGeneratingTTS(false);
         }

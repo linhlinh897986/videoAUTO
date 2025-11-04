@@ -46,10 +46,10 @@ const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
                         onClick={() => onGenerateTTS(subtitles)}
                         disabled={isGeneratingTTS || subtitles.length === 0}
                         className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2"
-                        title="Tạo TTS cho tất cả phụ đề"
+                        title="Tạo TTS cho phụ đề đã dịch"
                     >
                         <TTSIcon className="w-5 h-5" />
-                        <span>{isGeneratingTTS ? 'Đang tạo TTS...' : 'Tạo TTS Tất Cả'}</span>
+                        <span>{isGeneratingTTS ? 'Đang tạo TTS...' : 'Tạo TTS Bản Dịch'}</span>
                     </button>
                 )}
             </div>
