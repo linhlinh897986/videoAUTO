@@ -22,8 +22,10 @@ from app.TTS.constants import voices as tts_voices, sessionid as tts_sessionids
 APP_ROOT = Path(__file__).resolve().parent
 DB_PATH = APP_ROOT / "data" / "app.db"
 ASR_ROOT = APP_ROOT / "data" / "asr"
+VIDEO_FOLDER = APP_ROOT / "Video"  # Folder to scan for videos to auto-import
 
 ASR_ROOT.mkdir(parents=True, exist_ok=True)
+VIDEO_FOLDER.mkdir(parents=True, exist_ok=True)
 
 db = Database(DB_PATH)
 
@@ -659,6 +661,102 @@ async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[
         "generated": generated_files,
         "errors": errors,
         "voice": payload.voice,
+    }
+
+
+# --- Video Auto-Import ---------------------------------------------------------
+
+@app.get("/videos/scan-folder")
+def scan_video_folder() -> Dict[str, Any]:
+    """Scan the Video folder for video files to import"""
+    supported_extensions = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    found_videos: List[Dict[str, Any]] = []
+    
+    if not VIDEO_FOLDER.exists():
+        return {
+            "status": "ok",
+            "videos": [],
+            "folder": str(VIDEO_FOLDER),
+            "message": "Video folder does not exist"
+        }
+    
+    for video_file in VIDEO_FOLDER.iterdir():
+        if video_file.is_file() and video_file.suffix.lower() in supported_extensions:
+            found_videos.append({
+                "filename": video_file.name,
+                "path": str(video_file),
+                "size": video_file.stat().st_size,
+            })
+    
+    return {
+        "status": "ok",
+        "videos": found_videos,
+        "folder": str(VIDEO_FOLDER),
+        "count": len(found_videos),
+    }
+
+
+@app.post("/projects/{project_id}/videos/import-from-folder")
+async def import_videos_from_folder(project_id: str) -> Dict[str, Any]:
+    """Import all videos from the Video folder into the specified project"""
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    
+    supported_extensions = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    imported_videos: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    
+    if not VIDEO_FOLDER.exists():
+        return {
+            "status": "ok",
+            "imported": [],
+            "errors": [],
+            "message": "Video folder does not exist"
+        }
+    
+    for video_file in VIDEO_FOLDER.iterdir():
+        if not video_file.is_file() or video_file.suffix.lower() not in supported_extensions:
+            continue
+        
+        try:
+            # Generate unique file ID
+            file_id = f"video-{project_id}-{dt.datetime.utcnow().timestamp()}-{video_file.stem}"
+            
+            # Read video data
+            video_data = video_file.read_bytes()
+            
+            # Save to database
+            created_at = dt.datetime.utcnow().isoformat()
+            storage_path, file_size = db.save_file(
+                file_id=file_id,
+                project_id=project_id,
+                filename=video_file.name,
+                content_type="video/mp4" if video_file.suffix.lower() == ".mp4" else "video/*",
+                data=video_data,
+                created_at=created_at,
+            )
+            
+            imported_videos.append({
+                "file_id": file_id,
+                "filename": video_file.name,
+                "storage_path": str(storage_path),
+                "file_size": file_size,
+                "created_at": created_at,
+            })
+            
+        except Exception as exc:
+            errors.append({
+                "filename": video_file.name,
+                "error": str(exc),
+            })
+    
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "imported": imported_videos,
+        "errors": errors,
+        "count": len(imported_videos),
     }
 
 

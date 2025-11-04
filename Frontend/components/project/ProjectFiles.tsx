@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 import { Project, SrtFile, CustomStyle, KeywordPair, Character, ApiKey, SubtitleBlock, ContextItem, VideoFile, AudioFile } from '../../types';
 import { parseSrt, composeSrt, formatForGemini } from '../../services/srtParser';
 import { batchTranslateFiles, countTokensInText } from '../../services/geminiService';
-import { saveVideo, deleteVideo, getVideoUrl, getStoredFileInfo, generateMissingSrtsFromAsr } from '../../services/projectService';
+import { saveVideo, deleteVideo, getVideoUrl, getStoredFileInfo, generateMissingSrtsFromAsr, importVideosFromFolder } from '../../services/projectService';
 import { analyzeVideoForHardsubs, preloadAudioBuffer } from '../../services/videoAnalysisService';
 import {
   UploadIcon, TrashIcon, TranslateIcon, DownloadIcon,
@@ -25,6 +25,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
   const [activelyTranslating, setActivelyTranslating] = useState<Set<string>>(new Set());
   const [clipboardMessage, setClipboardMessage] = useState<string | null>(null);
   const [isGeneratingSrts, setIsGeneratingSrts] = useState<boolean>(false);
+  const [isImportingVideos, setIsImportingVideos] = useState<boolean>(false);
   
   const srtFiles = useMemo(() => project.files.filter((f): f is SrtFile => f.type === 'srt'), [project.files]);
   const sortedFiles = useMemo(() => {
@@ -33,7 +34,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
   
   const totalTokens = useMemo(() => srtFiles.reduce((acc, file) => acc + (file.tokenCount || 0), 0), [srtFiles]);
 
-  const isProcessingAnyFile = Object.keys(processingStatus).length > 0;
+  const isProcessingAnyFile = Object.keys(processingStatus).length > 0 || isImportingVideos;
 
   useEffect(() => {
     const fileExists = sortedFiles.some(f => f.id === selectedFileId);
@@ -224,8 +225,9 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
   
   const handleDeleteFile = (fileId: string) => {
     const fileToDelete = project.files.find(f => f.id === fileId);
-    if (fileToDelete?.type === 'video' || fileToDelete?.type === 'audio') {
-        deleteVideo(fileId).catch(err => console.error(`Failed to delete media ${fileId}`, err));
+    // Delete file from backend for all file types (video, audio, and any others stored in backend)
+    if (fileToDelete) {
+        deleteVideo(fileId).catch(err => console.error(`Failed to delete file ${fileId}`, err));
     }
     onUpdateProject(project.id, (p) => ({
       files: p.files.filter(f => f.id !== fileId)
@@ -234,10 +236,9 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
 
   const handleDeleteAllFiles = () => {
     if (project.files.length === 0) return;
+    // Delete all files from backend
     project.files.forEach(file => {
-        if (file.type === 'video' || file.type === 'audio') {
-            deleteVideo(file.id).catch(err => console.error(`Failed to delete media ${file.id}`, err));
-        }
+        deleteVideo(file.id).catch(err => console.error(`Failed to delete file ${file.id}`, err));
     });
     onUpdateProject(project.id, { files: [] });
     setSelectedFileId(null);
@@ -464,6 +465,50 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
         setIsGeneratingSrts(false);
     }
   };
+
+  const handleImportVideosFromFolder = async () => {
+    if (isImportingVideos) return;
+    
+    setIsImportingVideos(true);
+    try {
+        const response = await importVideosFromFolder(project.id);
+        
+        if (response.imported.length === 0) {
+            const message = response.message || 'Không tìm thấy video nào trong thư mục Video để import.';
+            setClipboardMessage(message);
+            return;
+        }
+
+        // Create VideoFile objects for imported videos
+        const newVideoFiles: VideoFile[] = response.imported.map(item => ({
+            id: item.file_id,
+            name: item.filename,
+            type: 'video',
+            segments: [],
+            masterVolumeDb: 0,
+            storagePath: item.storage_path,
+            fileSize: item.file_size,
+            uploadedAt: item.created_at,
+        }));
+
+        // Add to project
+        onUpdateProject(project.id, p => ({
+            files: [...p.files, ...newVideoFiles],
+        }));
+
+        if (newVideoFiles.length > 0) {
+            setSelectedFileId(newVideoFiles[0].id);
+        }
+
+        const message = `Đã import ${response.imported.length} video từ thư mục!${response.errors.length > 0 ? ` (${response.errors.length} lỗi)` : ''}`;
+        setClipboardMessage(message);
+    } catch (error) {
+        console.error('Failed to import videos from folder', error);
+        setClipboardMessage(error instanceof Error ? `Lỗi import videos: ${error.message}` : 'Lỗi import videos từ thư mục.');
+    } finally {
+        setIsImportingVideos(false);
+    }
+  };
   
     const handleEditVideo = (videoFile: VideoFile) => {
     const srtFileName = videoFile.name.replace(/\.[^/.]+$/, "") + ".srt";
@@ -608,6 +653,15 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                 >
                     {isGeneratingSrts ? <LoadingSpinner /> : <SubtitlesIcon className="w-5 h-5" />}
                     <span>Tạo SRT từ ASR</span>
+                </button>
+                <button
+                    onClick={handleImportVideosFromFolder}
+                    disabled={isImportingVideos || isProcessingAnyFile}
+                    className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-800 disabled:cursor-wait text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2"
+                    title="Import videos từ thư mục Video"
+                >
+                    {isImportingVideos ? <LoadingSpinner /> : <FilmIcon className="w-5 h-5" />}
+                    <span>Import Videos</span>
                 </button>
                 <button onClick={handleDeleteAllFiles} disabled={project.files.length === 0} className="w-full bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2">
                     <TrashIcon className="w-5 h-5" />
