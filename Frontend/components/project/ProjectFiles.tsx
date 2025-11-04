@@ -588,9 +588,6 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                     {isGeneratingSrts ? <LoadingSpinner /> : <SubtitlesIcon className="w-5 h-5" />}
                     <span>Tạo SRT từ ASR</span>
                 </button>
-                <p className="text-xs text-amber-200/80 text-center">
-                    Hệ thống sẽ cố gắng tách âm thanh bằng ffmpeg nếu chưa có file audio phù hợp.
-                </p>
                 <button onClick={handleDeleteAllFiles} disabled={project.files.length === 0} className="w-full bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded flex items-center justify-center space-x-2">
                     <TrashIcon className="w-5 h-5" />
                     <span>Xóa Tất Cả</span>
