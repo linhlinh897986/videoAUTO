@@ -569,6 +569,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   // Create and manage audio elements for TTS files
   useEffect(() => {
     const audioMap = audioElementsRef.current;
+    let cancelled = false;
     
     // Remove audio elements for deleted files
     const currentFileIds = new Set(audioFiles.map(f => f.id));
@@ -583,17 +584,27 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     // Create audio elements for new files
     const loadAudioFiles = async () => {
       for (const audioFile of audioFiles) {
+        if (cancelled) break;
+        
         if (!audioMap.has(audioFile.id)) {
-          const audio = new Audio();
           try {
             const audioUrl = await getFileUrl(audioFile.id);
+            if (cancelled) {
+              // Clean up the URL if component unmounted
+              if (audioUrl) URL.revokeObjectURL(audioUrl);
+              break;
+            }
+            
             if (audioUrl) {
+              const audio = new Audio();
               audio.src = audioUrl;
               audio.preload = 'auto';
               audioMap.set(audioFile.id, audio);
             }
           } catch (error) {
-            console.error(`Failed to load audio file ${audioFile.id}:`, error);
+            if (!cancelled) {
+              console.error(`Failed to load audio file ${audioFile.id}:`, error);
+            }
           }
         }
       }
@@ -602,6 +613,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     loadAudioFiles();
     
     return () => {
+      cancelled = true;
       // Cleanup on unmount
       for (const audio of audioMap.values()) {
         audio.pause();
