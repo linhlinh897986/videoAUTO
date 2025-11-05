@@ -1157,38 +1157,53 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
             const rawBase = import.meta.env.VITE_API_BASE_URL ?? '';
             const API_BASE_URL = rawBase ? rawBase.replace(/\/$/, '') : '';
             
+            // Prepare complete render data with ALL editing information
+            const renderPayload = {
+                video_file_id: videoFile.id,
+                video_segments: segments,
+                subtitles: subtitles,
+                audio_files: audioFiles,
+                subtitle_style: project.subtitleStyle,
+                hardsub_cover_box: hardsubCoverBox,
+                master_volume_db: masterVolumeDb,
+                video_frame_url: project.subtitleStyle?.videoFrameUrl,
+            };
+            
             const response = await fetch(`${API_BASE_URL}/projects/${project.id}/render`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    video_file_id: videoFile.id,
-                    include_audio: true,
-                    include_subtitles: true,
-                    subtitle_style: project.subtitleStyle,
-                    hardsub_cover_box: hardsubCoverBox,
-                }),
+                body: JSON.stringify(renderPayload),
             });
 
             if (!response.ok) {
-                throw new Error(`Render request failed: ${response.statusText}`);
+                const errorText = await response.text();
+                throw new Error(`Render request failed: ${errorText || response.statusText}`);
             }
 
             const result = await response.json();
             
-            alert(`Đã chuẩn bị dữ liệu render thành công!\n\n` +
-                  `- Video segments: ${result.video_segments_count}\n` +
-                  `- Audio tracks: ${result.audio_tracks_count}\n` +
-                  `- Subtitles: ${result.has_subtitles ? 'Có' : 'Không'}\n\n` +
-                  `${result.message}`);
+            if (result.status === 'success') {
+                alert(`✅ Render video thành công!\n\n` +
+                      `Tên file: ${result.output_filename}\n` +
+                      `Đường dẫn: ${result.output_path}\n` +
+                      `Thời lượng: ${result.duration_seconds?.toFixed(2) || 'N/A'}s\n` +
+                      `Video segments: ${result.video_segments_count}\n` +
+                      `Audio tracks: ${result.audio_tracks_count}\n` +
+                      `Subtitles: ${result.subtitles_count}`);
+            } else if (result.status === 'processing') {
+                alert(`⏳ Video đang được render...\n\n${result.message || 'Vui lòng chờ trong giây lát.'}`);
+            } else {
+                alert(`⚠️ ${result.message || 'Render không thành công'}`);
+            }
         } catch (error) {
             console.error('Failed to render video:', error);
             const errorMsg = error instanceof Error ? error.message : 'Unknown error';
             if (errorMsg.includes('Failed to fetch') || errorMsg.includes('ERR_CONNECTION_REFUSED')) {
-                alert('Lỗi kết nối: Backend không chạy. Vui lòng khởi động backend trước khi render video.');
+                alert('❌ Lỗi kết nối: Backend không chạy. Vui lòng khởi động backend trước khi render video.');
             } else {
-                alert(`Lỗi khi render video: ${errorMsg}`);
+                alert(`❌ Lỗi khi render video: ${errorMsg}`);
             }
         } finally {
             setIsRendering(false);
