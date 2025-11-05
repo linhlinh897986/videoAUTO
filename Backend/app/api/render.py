@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import math
 import shutil
 import subprocess
 import tempfile
@@ -247,23 +248,73 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
 
             filter_parts.append(f"{video_stream}[vout]")
 
-            for idx, audio_info in enumerate(audio_paths):
-                start_time = audio_info.get("start_time", 0)
-                track = audio_info.get("track", idx)
-                filter_parts.append(
-                    f"[{idx + 1}:a]adelay={int(start_time * 1000)}|{int(start_time * 1000)},volume=1.0[a{idx}]"
-                )
-                filter_parts.append(f"[a{idx}]asetpts=PTS-STARTPTS[a{idx}out]")
+            audio_output_label: Optional[str] = None
 
-            audio_inputs = "".join([f"[a{idx}out]" for idx in range(len(audio_paths))])
-            if audio_inputs:
-                filter_parts.append(f"{audio_inputs}amix=inputs={len(audio_paths)}:normalize=0[aout]")
+            if audio_paths:
+                base_audio_stream = "[0:a]"
+
+                if video_segments and len(video_segments) > 0:
+                    audio_segment_filters: List[str] = []
+                    for i, segment in enumerate(video_segments):
+                        start = segment.get("sourceStartTime", 0)
+                        end = segment.get("sourceEndTime", 0)
+                        rate = segment.get("playbackRate", 1.0)
+
+                        if 0.5 <= rate <= 2.0:
+                            tempo_filter = f"atempo={rate}"
+                        else:
+                            tempo_filter = "atempo=1.0"
+
+                        audio_segment_filters.append(
+                            f"[0:a]trim=start={start}:end={end},{tempo_filter}[seg{i}a]"
+                        )
+
+                    if audio_segment_filters:
+                        filter_parts.append(";".join(audio_segment_filters))
+                        segment_labels = "".join([f"[seg{i}a]" for i in range(len(audio_segment_filters))])
+                        filter_parts.append(
+                            f"{segment_labels}concat=n={len(audio_segment_filters)}:v=0:a=1[orig_audio]"
+                        )
+                        base_audio_stream = "[orig_audio]"
+
+                delay_filters: List[str] = []
+                delayed_labels: List[str] = []
+                for idx, audio_info in enumerate(audio_paths):
+                    start_time_ms = int(audio_info.get("start_time", 0) * 1000)
+                    delay_filters.append(
+                        f"[{idx + 1}:a]adelay={start_time_ms}|{start_time_ms}[a{idx + 1}]"
+                    )
+                    delayed_labels.append(f"[a{idx + 1}]")
+
+                mix_inputs = base_audio_stream + "".join(delayed_labels)
+                mix_label = "aout"
+                if payload.master_volume_db:
+                    mix_label = "aout_mix"
+
+                delay_filters.append(
+                    f"{mix_inputs}amix=inputs={len(audio_paths) + 1}:duration=longest:normalize=0[{mix_label}]"
+                )
+
+                if payload.master_volume_db:
+                    linear_gain = math.pow(10.0, payload.master_volume_db / 20.0)
+                    delay_filters.append(f"[{mix_label}]volume={linear_gain:.6f}[aout]")
+                    audio_output_label = "[aout]"
+                else:
+                    audio_output_label = f"[{mix_label}]"
+
+                filter_parts.append(";".join(delay_filters))
+            elif payload.master_volume_db:
+                linear_gain = math.pow(10.0, payload.master_volume_db / 20.0)
+                filter_parts.append(f"[0:a]volume={linear_gain:.6f}[aout]")
+                audio_output_label = "[aout]"
 
             filter_complex_parts.extend(filter_parts)
 
             ffmpeg_cmd.extend(["-filter_complex", ";".join(filter_complex_parts)])
             ffmpeg_cmd.extend(["-map", "[vout]"])
-            if audio_paths:
+            if audio_output_label:
+                ffmpeg_cmd.extend(["-map", audio_output_label])
+            elif audio_paths:
                 ffmpeg_cmd.extend(["-map", "[aout]"])
         else:
             ffmpeg_cmd.extend(video_filters)
