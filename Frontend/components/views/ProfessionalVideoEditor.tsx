@@ -99,7 +99,8 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
   const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
   const [ttsVoices, setTtsVoices] = useState<TTSVoice[]>([]);
-  const [selectedTtsVoice, setSelectedTtsVoice] = useState<string>("BV421_vivn_streaming");
+  // Use project's TTS voice if set, otherwise default to BV421_vivn_streaming
+  const selectedTtsVoice = project.ttsVoice || "BV421_vivn_streaming";
 
   const maxSubtitleEndTime = useMemo(() => {
     if (subtitles.length === 0) return 0;
