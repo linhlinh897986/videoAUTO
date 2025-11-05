@@ -336,12 +336,15 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                             # Chain atempo filters for extreme rates
                             tempo_filters = []
                             current_rate = rate
+                            # For fast rates (>2.0), apply multiple 2.0x filters
                             while current_rate > 2.0:
                                 tempo_filters.append("atempo=2.0")
                                 current_rate /= 2.0
+                            # For slow rates (<0.5), apply multiple 0.5x filters
                             while current_rate < 0.5:
                                 tempo_filters.append("atempo=0.5")
-                                current_rate *= 2.0  # Multiply to increase rate back toward 0.5-2.0 range
+                                current_rate *= 2.0  # Each 0.5x filter doubles the effective rate
+                            # Apply remaining rate if not exactly 1.0
                             if current_rate != 1.0:
                                 tempo_filters.append(f"atempo={current_rate}")
                             tempo_filter = "," + ",".join(tempo_filters) if tempo_filters else ""
