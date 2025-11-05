@@ -80,6 +80,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   const [isSeeking, setIsSeeking] = useState(false);
   const [currentPlaybackRate, setCurrentPlaybackRate] = useState(1);
   const [zoom, setZoom] = useState(1);
+  const [audioUrls, setAudioUrls] = useState<Map<string, string>>(new Map()); // Share URLs with Timeline
   
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]);
   const [selectedSubtitleIds, setSelectedSubtitleIds] = useState<number[]>([]);
@@ -89,6 +90,8 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const audioUrlsRef = useRef<Map<string, string>>(new Map()); // Store URLs separately
+  const playingAudioRef = useRef<Set<string>>(new Set()); // Track which audio is currently playing
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
@@ -569,6 +572,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   // Create and manage audio elements for TTS files
   useEffect(() => {
     const audioMap = audioElementsRef.current;
+    const urlMap = audioUrlsRef.current;
     let cancelled = false;
     
     // Remove audio elements for deleted files
@@ -578,37 +582,65 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         audio.pause();
         audio.src = '';
         audioMap.delete(id);
+        
+        // Revoke the URL when removing audio
+        const url = urlMap.get(id);
+        if (url) {
+          URL.revokeObjectURL(url);
+          urlMap.delete(id);
+        }
       }
     }
     
-    // Create audio elements for new files
+    // Create audio elements for new files (only if not already loaded)
     const loadAudioFiles = async () => {
+      const newUrls = new Map(urlMap); // Start with existing URLs
+      
       for (const audioFile of audioFiles) {
         if (cancelled) break;
         
-        if (!audioMap.has(audioFile.id)) {
-          try {
-            const audioUrl = await getFileUrl(audioFile.id);
-            if (cancelled) {
-              // Clean up the blob URL if component unmounted
-              if (audioUrl) {
-                URL.revokeObjectURL(audioUrl);
-              }
-              break;
-            }
-            
+        // Skip if already loaded
+        if (audioMap.has(audioFile.id)) continue;
+        
+        try {
+          const audioUrl = await getFileUrl(audioFile.id);
+          if (cancelled) {
+            // Clean up the blob URL if component unmounted
             if (audioUrl) {
-              const audio = new Audio();
-              audio.src = audioUrl;
-              audio.preload = 'auto';
-              audioMap.set(audioFile.id, audio);
+              URL.revokeObjectURL(audioUrl);
             }
-          } catch (error) {
-            if (!cancelled) {
-              console.error(`Failed to load audio file ${audioFile.id}:`, error);
-            }
+            break;
+          }
+          
+          if (audioUrl) {
+            const audio = new Audio();
+            audio.src = audioUrl;
+            audio.preload = 'auto';
+            audio.loop = false;
+            
+            // Add event listeners for better error handling
+            audio.addEventListener('error', (e) => {
+              console.error(`Audio load error for ${audioFile.id}:`, e);
+            });
+            
+            audio.addEventListener('canplaythrough', () => {
+              console.log(`Audio ready to play: ${audioFile.id}`);
+            });
+            
+            audioMap.set(audioFile.id, audio);
+            urlMap.set(audioFile.id, audioUrl); // Store URL for later cleanup
+            newUrls.set(audioFile.id, audioUrl); // Add to new URLs map
+          }
+        } catch (error) {
+          if (!cancelled) {
+            console.error(`Failed to load audio file ${audioFile.id}:`, error);
           }
         }
+      }
+      
+      // Update the shared URLs state for Timeline
+      if (!cancelled) {
+        setAudioUrls(newUrls);
       }
     };
     
@@ -616,12 +648,8 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     
     return () => {
       cancelled = true;
-      // Cleanup on unmount
-      for (const audio of audioMap.values()) {
-        audio.pause();
-        audio.src = '';
-      }
-      audioMap.clear();
+      // Note: Don't clear or revoke on every effect run, only when component unmounts
+      // This prevents the audio from breaking when audioFiles array is recreated
     };
   }, [audioFiles]);
   
@@ -661,34 +689,47 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         // Handle audio playback for TTS files
         if (timelineTime !== null) {
             const audioMap = audioElementsRef.current;
+            const playingAudio = playingAudioRef.current;
+            
             for (const audioFile of audioFiles) {
                 const audio = audioMap.get(audioFile.id);
                 if (!audio) continue;
                 
-                const audioStart = audioFile.startTime;
+                const audioStart = audioFile.startTime || 0;
                 const audioEnd = audioStart + (audioFile.duration || 0);
                 const isInRange = timelineTime >= audioStart && timelineTime < audioEnd;
                 
                 if (isInRange && !video.paused) {
                     // Should be playing
                     const audioTime = timelineTime - audioStart;
-                    if (audio.paused || Math.abs(audio.currentTime - audioTime) > 0.2) {
+                    const timeDiff = Math.abs(audio.currentTime - audioTime);
+                    
+                    // Only sync if significantly out of sync (>0.3s) or if not playing
+                    if (audio.paused || timeDiff > 0.3) {
                         audio.currentTime = audioTime;
-                        audio.play().catch(err => console.warn('Audio play failed:', err));
+                        if (audio.paused) {
+                            audio.play().catch(err => {
+                                console.warn(`Audio play failed for ${audioFile.id}:`, err);
+                            });
+                            playingAudio.add(audioFile.id);
+                        }
                     }
                 } else {
                     // Should not be playing
                     if (!audio.paused) {
                         audio.pause();
+                        playingAudio.delete(audioFile.id);
                     }
                 }
             }
         } else {
             // Outside any segment - pause all audio
             const audioMap = audioElementsRef.current;
-            for (const audio of audioMap.values()) {
+            const playingAudio = playingAudioRef.current;
+            for (const [id, audio] of audioMap.entries()) {
                 if (!audio.paused) {
                     audio.pause();
+                    playingAudio.delete(id);
                 }
             }
         }
@@ -1044,6 +1085,28 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
         }
     };
 
+  // Cleanup effect on component unmount
+  useEffect(() => {
+    return () => {
+      // Clean up all audio elements and URLs
+      const audioMap = audioElementsRef.current;
+      const urlMap = audioUrlsRef.current;
+      
+      for (const audio of audioMap.values()) {
+        audio.pause();
+        audio.src = '';
+      }
+      audioMap.clear();
+      
+      for (const url of urlMap.values()) {
+        URL.revokeObjectURL(url);
+      }
+      urlMap.clear();
+      
+      playingAudioRef.current.clear();
+    };
+  }, []);
+
   return (
     <div ref={editorContainerRef} className="bg-gray-900 text-white h-screen flex flex-col overflow-hidden">
       <header className="bg-gray-800 p-2 flex items-center justify-between border-b border-gray-700 flex-shrink-0 z-20">
@@ -1178,6 +1241,7 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
               videoUrl={videoUrl}
               subtitles={subtitles}
               audioFiles={audioFiles}
+              audioUrls={audioUrls}
               onTimelineUpdate={handleTimelineUpdate}
               onTimelineInteractionStart={handleTimelineInteractionStart}
               onTimelineInteractionEnd={handleTimelineInteractionEnd}

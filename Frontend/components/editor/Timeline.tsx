@@ -15,6 +15,7 @@ interface TimelineProps {
     videoFile: VideoFile;
     subtitles: SubtitleBlock[];
     audioFiles: AudioFile[];
+    audioUrls: Map<string, string>; // Receive URLs from parent instead of loading them
     onTimelineUpdate: (updateFn: (prevState: EditorState) => EditorState) => void;
     onTimelineInteractionStart: () => void;
     onTimelineInteractionEnd: () => void;
@@ -58,42 +59,17 @@ const WAVEFORM_TRACK_HEIGHT = 80;
 const VIDEO_TRACK_HEIGHT = TRACK_HEIGHT;
 
 const Timeline: React.FC<TimelineProps> = (props) => {
-    const { subtitles, audioFiles, currentTime, timelineVisualDuration, zoom, isPlaying, videoFile, isOverlayVisible, onToggleOverlayVisibility, selectedSegmentIds, onSelectSegment, selectedSubtitleIds, onSelectSubtitle, onDeselectAll, isMuted, onToggleMute } = props;
+    const { subtitles, audioFiles, audioUrls, currentTime, timelineVisualDuration, zoom, isPlaying, videoFile, isOverlayVisible, onToggleOverlayVisibility, selectedSegmentIds, onSelectSegment, selectedSubtitleIds, onSelectSubtitle, onDeselectAll, isMuted, onToggleMute } = props;
     const timelineContainerRef = useRef<HTMLDivElement>(null);
     const contentWrapperRef = useRef<HTMLDivElement>(null);
     const headerWrapperRef = useRef<HTMLDivElement>(null);
     
-    const [audioUrls, setAudioUrls] = useState<Map<string, string>>(new Map());
 
     const numAudioTracks = useMemo(() => {
         if (audioFiles.length === 0) return 1;
         const maxTrack = Math.max(-1, ...audioFiles.map(s => s.track ?? -1));
         return maxTrack + 2;
     }, [audioFiles]);
-
-    useEffect(() => {
-        let isCancelled = false;
-        const urls = new Map<string, string>();
-        const loadUrls = async () => {
-            for (const audioFile of audioFiles) {
-                try {
-                    const url = await getFileUrl(audioFile.id);
-                    if (url) {
-                        urls.set(audioFile.id, url);
-                    }
-                } catch (e) { console.error(e); }
-            }
-            if (!isCancelled) {
-                setAudioUrls(urls);
-            }
-        };
-        loadUrls();
-        return () => {
-            isCancelled = true;
-            urls.forEach(url => URL.revokeObjectURL(url));
-        };
-    }, [audioFiles]);
-    
 
     const { 
         getInteractionHandlers,
