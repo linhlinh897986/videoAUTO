@@ -25,15 +25,15 @@ class TTSBatchRequest(BaseModel):
     session_id: Optional[str] = None
 
 
-router = APIRouter(prefix="/tts")
+router = APIRouter()
 
 
-@router.get("/voices")
+@router.get("/tts/voices")
 def list_tts_voices() -> List[Dict[str, str]]:
     return [{"name": name, "id": voice_id} for name, voice_id in tts_voices]
 
 
-@router.post("/generate")
+@router.post("/tts/generate")
 def generate_tts(payload: TTSRequest) -> Dict[str, Any]:
     session_id = payload.session_id or tts_sessionids[0]
 
@@ -65,7 +65,7 @@ def generate_tts(payload: TTSRequest) -> Dict[str, Any]:
             temp_path.unlink()
 
 
-@router.post("/projects/{project_id}/batch")
+@router.post("/projects/{project_id}/tts/batch")
 async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[str, Any]:
     project = db.get_project(project_id)
     if project is None:
