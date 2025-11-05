@@ -987,24 +987,20 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
         # Build filter complex for both video and audio processing
         filter_complex_parts = []
         video_filters = []
+        has_blur_region = False
+        blur_region_params = None
         
-        # Apply hardsub cover box if specified (blur/frosted effect instead of solid black)
+        # Check if hardsub cover box needs blur (we'll handle it in filter_complex)
         if payload.hardsub_cover_box and payload.hardsub_cover_box.get("enabled"):
             box = payload.hardsub_cover_box
             x = int(box.get("x", 0) * 1920 / 100)  # Convert percentage to pixels (assuming 1920x1080)
             y = int(box.get("y", 0) * 1080 / 100)
             w = int(box.get("width", 0) * 1920 / 100)
             h = int(box.get("height", 0) * 1080 / 100)
-            # Use boxblur to create a frosted/blurred overlay effect in the specified region
-            # Use gte/lte instead of between to avoid comma escaping issues
-            # enable=1 when (y>=y1 AND y<=y2 AND x>=x1 AND x<=x2)
-            # IMPORTANT: Use lowercase x,y (the pixel coordinates), not uppercase X,Y
-            enable_expr = f"gte(y\\,{y})*lte(y\\,{y+h})*gte(x\\,{x})*lte(x\\,{x+w})"
-            video_filters.append(
-                f"boxblur=luma_radius=20:luma_power=3:enable='{enable_expr}'"
-            )
+            has_blur_region = True
+            blur_region_params = {'x': x, 'y': y, 'w': w, 'h': h}
         
-        # Note: frame overlay will be handled in filter_complex
+        # Note: frame overlay and blur will be handled in filter_complex
         
         # Add scale and fps filters (must come before subtitles)
         # Force 1080p resolution and 30fps
@@ -1019,34 +1015,45 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             video_filters.append(f"ass='{subtitle_path_str}'")
         
         # Combine video and audio processing
-        use_filter_complex = len(audio_paths) > 0 or frame_overlay_path  # Need filter_complex if mixing audio or overlaying
+        use_filter_complex = len(audio_paths) > 0 or frame_overlay_path or has_blur_region  # Need filter_complex if mixing audio, overlaying, or blurring
         
         if use_filter_complex:
             # Use filter_complex for both video and audio
             filter_parts = []
             
             # Video processing chain
-            if video_filters:
-                # Start with base video
-                video_stream = "[0:v]"
-                
-                # Apply drawbox and other basic filters first
-                basic_filters = [f for f in video_filters if not f.startswith('[') and 'overlay' not in f and 'ass' not in f]
-                if basic_filters:
-                    video_stream = f"{video_stream}{','.join(basic_filters)}"
-                
-                # Apply overlay if frame exists
-                if frame_overlay_path:
-                    overlay_input_idx = 1 + len(audio_paths)
-                    video_stream = f"{video_stream}[vtmp];[vtmp][{overlay_input_idx}:v]overlay=0:0"
-                
-                # Apply subtitles (must be last)
-                subtitle_filter = [f for f in video_filters if 'ass' in f]
-                if subtitle_filter:
-                    video_stream = f"{video_stream},{subtitle_filter[0]}"
-                
-                video_stream = f"{video_stream}[vout]"
-                filter_parts.append(video_stream)
+            # Start with base video
+            video_stream = "[0:v]"
+            
+            # Apply blur region if specified (using crop-blur-overlay method)
+            if has_blur_region:
+                params = blur_region_params
+                # Crop the region to blur, apply blur, then overlay back
+                # Split the video into two paths
+                video_stream = f"{video_stream}split[main][blur_src]"
+                # Create blurred region: crop -> blur
+                blur_chain = f";[blur_src]crop={params['w']}:{params['h']}:{params['x']}:{params['y']},boxblur=luma_radius=20:luma_power=3[blurred]"
+                filter_parts.append(blur_chain)
+                # Overlay the blurred region back onto main video
+                video_stream = f";[main][blurred]overlay={params['x']}:{params['y']}"
+            
+            # Apply basic filters (scale, pad, fps)
+            basic_filters = [f for f in video_filters if not f.startswith('[') and 'overlay' not in f and 'ass' not in f]
+            if basic_filters:
+                video_stream = f"{video_stream},{','.join(basic_filters)}"
+            
+            # Apply overlay if frame exists
+            if frame_overlay_path:
+                overlay_input_idx = 1 + len(audio_paths)
+                video_stream = f"{video_stream}[vtmp];[vtmp][{overlay_input_idx}:v]overlay=0:0"
+            
+            # Apply subtitles (must be last)
+            subtitle_filter = [f for f in video_filters if 'ass' in f]
+            if subtitle_filter:
+                video_stream = f"{video_stream},{subtitle_filter[0]}"
+            
+            video_stream = f"{video_stream}[vout]"
+            filter_parts.append(video_stream)
             
             # Audio mixing
             if len(audio_paths) > 0:
@@ -1060,10 +1067,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             ffmpeg_cmd.extend(["-filter_complex", ";".join(filter_parts)])
             
             # Map outputs
-            if video_filters:
-                ffmpeg_cmd.extend(["-map", "[vout]"])
-            else:
-                ffmpeg_cmd.extend(["-map", "0:v"])
+            ffmpeg_cmd.extend(["-map", "[vout]"])
             
             if len(audio_paths) > 0:
                 ffmpeg_cmd.extend(["-map", "[aout]"])
