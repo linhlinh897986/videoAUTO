@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Project, VideoFile, SrtFile, SubtitleBlock, VideoSegment, BoundingBox, SubtitleStyle, AudioFile } from '../../types';
 import { getVideoUrl, getFileUrl } from '../../services/projectService';
 import { srtTimeToSeconds, secondsToSrtTime } from '../../services/srtParser';
-import { BackArrowIcon, ChevronLeftIcon, ChevronRightIcon } from '../ui/Icons';
+import { BackArrowIcon, ChevronLeftIcon, ChevronRightIcon, RenderIcon } from '../ui/Icons';
 import VideoPlayer from '../editor/VideoPlayer';
 import SubtitleEditor from '../editor/SubtitleList';
 import StyleEditor from '../editor/StyleEditor';
@@ -99,8 +99,9 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
   const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
   const [ttsVoices, setTtsVoices] = useState<TTSVoice[]>([]);
-  // Use project's TTS voice if set, otherwise default to BV421_vivn_streaming
-  const selectedTtsVoice = project.ttsVoice || "BV421_vivn_streaming";
+  // Use project's TTS voice if set, otherwise default to BV074_streaming
+  const selectedTtsVoice = project.ttsVoice || "BV074_streaming";
+  const [isRendering, setIsRendering] = useState(false);
 
   const maxSubtitleEndTime = useMemo(() => {
     if (subtitles.length === 0) return 0;
@@ -1157,6 +1158,51 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
         }
     };
 
+    const handleRenderVideo = async () => {
+        setIsRendering(true);
+        try {
+            const rawBase = import.meta.env.VITE_API_BASE_URL ?? '';
+            const API_BASE_URL = rawBase ? rawBase.replace(/\/$/, '') : '';
+            
+            const response = await fetch(`${API_BASE_URL}/projects/${project.id}/render`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    project_id: project.id,
+                    video_file_id: videoFile.id,
+                    include_audio: true,
+                    include_subtitles: true,
+                    subtitle_style: project.subtitleStyle,
+                    hardsub_cover_box: hardsubCoverBox,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Render request failed: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+            
+            alert(`Đã chuẩn bị dữ liệu render thành công!\n\n` +
+                  `- Video segments: ${result.video_segments_count}\n` +
+                  `- Audio tracks: ${result.audio_tracks_count}\n` +
+                  `- Subtitles: ${result.has_subtitles ? 'Có' : 'Không'}\n\n` +
+                  `${result.message}`);
+        } catch (error) {
+            console.error('Failed to render video:', error);
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+            if (errorMsg.includes('Failed to fetch') || errorMsg.includes('ERR_CONNECTION_REFUSED')) {
+                alert('Lỗi kết nối: Backend không chạy. Vui lòng khởi động backend trước khi render video.');
+            } else {
+                alert(`Lỗi khi render video: ${errorMsg}`);
+            }
+        } finally {
+            setIsRendering(false);
+        }
+    };
+
   // Cleanup effect on component unmount
   useEffect(() => {
     return () => {
@@ -1190,6 +1236,15 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
           </div>
         </div>
         <div className="flex items-center space-x-2">
+            <button
+                onClick={handleRenderVideo}
+                disabled={isRendering}
+                className="bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-md flex items-center space-x-2"
+                title="Render video với tất cả chỉnh sửa"
+            >
+                <RenderIcon className="w-5 h-5" />
+                <span>{isRendering ? 'Đang render...' : 'Render Video'}</span>
+            </button>
             <button
                 onClick={() => navigateToVideo('previous')}
                 disabled={!canGoToPrevious}

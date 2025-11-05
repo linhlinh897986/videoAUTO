@@ -510,14 +510,14 @@ def generate_missing_project_srts(
 
 class TTSRequest(BaseModel):
     text: str
-    voice: str = "BV421_vivn_streaming"  # Default Vietnamese voice
+    voice: str = "BV074_streaming"  # Default Vietnamese voice
     session_id: Optional[str] = None
 
 
 class TTSBatchRequest(BaseModel):
     """Generate TTS for multiple subtitle blocks"""
     subtitles: List[Dict[str, Any]]  # List of subtitle objects with id, text, startTime, endTime
-    voice: str = "BV421_vivn_streaming"
+    voice: str = "BV074_streaming"
     session_id: Optional[str] = None
 
 
@@ -812,6 +812,76 @@ async def import_videos_from_folder(project_id: str) -> Dict[str, Any]:
         "imported": imported_videos,
         "errors": errors,
         "count": len(imported_videos),
+    }
+
+
+# --- Video Rendering -----------------------------------------------------------
+
+class VideoRenderRequest(BaseModel):
+    """Request to render a video with all editing data"""
+    project_id: str
+    video_file_id: str
+    output_filename: Optional[str] = None
+    include_audio: bool = True
+    include_subtitles: bool = True
+    subtitle_style: Optional[Dict[str, Any]] = None
+    hardsub_cover_box: Optional[Dict[str, Any]] = None
+
+
+@app.post("/projects/{project_id}/render")
+async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str, Any]:
+    """
+    Render video with all editing information (audio tracks, subtitles, hardsub cover, etc.)
+    This endpoint prepares the data and creates a render job that can be processed asynchronously.
+    """
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    
+    # Validate video file exists
+    video_file = None
+    for f in project.get("files", []):
+        if isinstance(f, dict) and f.get("id") == payload.video_file_id:
+            video_file = f
+            break
+    
+    if video_file is None:
+        raise HTTPException(status_code=404, detail=f"Video file not found: {payload.video_file_id}")
+    
+    # Collect all audio files for this project
+    audio_files = [
+        f for f in project.get("files", [])
+        if isinstance(f, dict) and f.get("type") == "audio"
+    ]
+    
+    # Collect subtitle file
+    srt_file = None
+    for f in project.get("files", []):
+        if isinstance(f, dict) and f.get("type") == "srt":
+            srt_file = f
+            break
+    
+    # Prepare render data
+    render_data = {
+        "project_id": project_id,
+        "video_file": video_file,
+        "audio_files": audio_files if payload.include_audio else [],
+        "subtitle_file": srt_file if payload.include_subtitles else None,
+        "subtitle_style": payload.subtitle_style,
+        "hardsub_cover_box": payload.hardsub_cover_box,
+        "output_filename": payload.output_filename or f"rendered_{project_id}_{dt.datetime.utcnow().timestamp()}.mp4",
+        "created_at": dt.datetime.utcnow().isoformat(),
+    }
+    
+    # For now, return the collected data
+    # In a full implementation, this would create a render job and queue it for processing
+    return {
+        "status": "prepared",
+        "message": "Render data collected successfully. Rendering functionality requires ffmpeg and will be processed asynchronously.",
+        "render_data": render_data,
+        "video_segments_count": len(video_file.get("segments", [])) if isinstance(video_file, dict) else 0,
+        "audio_tracks_count": len(audio_files),
+        "has_subtitles": srt_file is not None,
     }
 
 

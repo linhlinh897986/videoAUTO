@@ -209,7 +209,7 @@ const ProjectSettings: React.FC<ProjectSettingsProps> = ({
             <h4 className="text-lg font-semibold mb-2 text-gray-200">Giọng Nói TTS</h4>
             <p className="text-gray-400 mb-4">Chọn giọng nói mặc định để tạo âm thanh từ phụ đề đã dịch.</p>
             <select
-              value={project.ttsVoice || 'BV421_vivn_streaming'}
+              value={project.ttsVoice || 'BV074_streaming'}
               onChange={(e) => onUpdateProject(project.id, { ttsVoice: e.target.value })}
               className="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
               disabled={isLoadingVoices}
@@ -221,7 +221,7 @@ const ProjectSettings: React.FC<ProjectSettingsProps> = ({
                   <option key={voice.id} value={voice.id}>{voice.name}</option>
                 ))
               ) : (
-                <option value="BV421_vivn_streaming">BV421_vivn_streaming (Mặc định)</option>
+                <option value="BV074_streaming">BV074_streaming (Mặc định)</option>
               )}
             </select>
             <p className="text-xs text-gray-500 mt-2">
