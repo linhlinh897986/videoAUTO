@@ -1038,10 +1038,11 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             if basic_filters:
                 video_stream = f"{video_stream}{','.join(basic_filters)}"
             
-            # Apply overlay if frame exists
+            # Apply overlay if frame exists (scale frame to 1920x1080 to match video)
             if frame_overlay_path:
                 overlay_input_idx = 1 + len(audio_paths)
-                video_stream = f"{video_stream}[vtmp];[vtmp][{overlay_input_idx}:v]overlay=0:0"
+                # Scale the frame overlay to match the normalized 1080p video
+                video_stream = f"{video_stream}[vtmp];[{overlay_input_idx}:v]scale=1920:1080[frame];[vtmp][frame]overlay=0:0"
             
             # Apply subtitles (must be last)
             subtitle_filter = [f for f in video_filters if 'ass' in f]
