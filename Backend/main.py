@@ -859,7 +859,7 @@ def _create_ass_subtitle_file(
     # ASS alignment (2=bottom center, 1=bottom left, 3=bottom right)
     alignment = 2 if h_align == "center" else (1 if h_align == "left" else 3)
     
-    # Create ASS content
+    # Create ASS content with proper UTF-8 BOM for Vietnamese support
     ass_content = f"""[Script Info]
 Title: Rendered Subtitles
 ScriptType: v4.00+
@@ -867,6 +867,7 @@ WrapStyle: 0
 ScaledBorderAndShadow: yes
 PlayResX: 1920
 PlayResY: 1080
+YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -897,7 +898,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         text = sub.get("text", "").replace('\n', '\\N')
         ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n"
     
-    output_path.write_text(ass_content, encoding='utf-8')
+    output_path.write_text(ass_content, encoding='utf-8-sig')  # UTF-8 with BOM for better compatibility
 
 
 @app.post("/projects/{project_id}/render")
@@ -993,7 +994,8 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
         # Check if hardsub cover box needs blur (using modern drawbox with blur parameter)
         if payload.hardsub_cover_box and payload.hardsub_cover_box.get("enabled"):
             box = payload.hardsub_cover_box
-            x = int(box.get("x", 0) * 1920 / 100)  # Convert percentage to pixels (assuming 1920x1080)
+            # Convert percentage to pixels - will apply AFTER scaling to 1080p
+            x = int(box.get("x", 0) * 1920 / 100)
             y = int(box.get("y", 0) * 1080 / 100)
             w = int(box.get("width", 0) * 1920 / 100)
             h = int(box.get("height", 0) * 1080 / 100)
@@ -1002,17 +1004,17 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
         
         # Note: frame overlay and blur will be handled in filter_complex
         
-        # Apply blur region using modern drawbox filter with built-in blur (requires ffmpeg ≥5.1)
+        # IMPORTANT: Scale to 1080p FIRST before applying blur or subtitles
+        # This ensures blur coordinates work correctly for any input resolution
+        video_filters.append("scale=1920:1080:force_original_aspect_ratio=decrease")
+        video_filters.append("pad=1920:1080:(ow-iw)/2:(oh-ih)/2")
+        video_filters.append("fps=30")
+        
+        # Apply blur region using modern drawbox filter AFTER scaling (requires ffmpeg ≥5.1)
         if has_blur_region:
             params = blur_region_params
             # Modern drawbox with blur parameter - much simpler and faster
             video_filters.append(f"drawbox=x={params['x']}:y={params['y']}:w={params['w']}:h={params['h']}:color=black@0.0:t=fill:blur=20")
-        
-        # Add scale and fps filters (must come before subtitles)
-        # Force 1080p resolution and 30fps
-        video_filters.append("scale=1920:1080:force_original_aspect_ratio=decrease")
-        video_filters.append("pad=1920:1080:(ow-iw)/2:(oh-ih)/2")
-        video_filters.append("fps=30")
         
         # Add subtitles if exists (must be last in video filter chain)
         if subtitle_file:
@@ -1049,12 +1051,25 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             video_stream = f"{video_stream}[vout]"
             filter_parts.append(video_stream)
             
-            # Audio mixing
+            # Audio mixing with proper timing
             if len(audio_paths) > 0:
-                audio_inputs = "[0:a]"
-                for i in range(len(audio_paths)):
-                    audio_inputs += f"[{i+1}:a]"
-                audio_chain = f"{audio_inputs}amix=inputs={len(audio_paths)+1}:duration=longest[aout]"
+                # Build audio filter chain with delays for proper timeline positioning
+                audio_filter_parts = []
+                
+                # Original audio (no delay needed)
+                audio_filter_parts.append("[0:a]")
+                
+                # Add each TTS audio with adelay based on startTime
+                for i, audio_info in enumerate(audio_paths):
+                    start_time_ms = int(audio_info["start_time"] * 1000)  # Convert seconds to milliseconds
+                    # adelay filter delays audio to the correct position in timeline
+                    audio_filter_parts.append(f"[{i+1}:a]adelay={start_time_ms}|{start_time_ms}[a{i+1}]")
+                
+                # Join delayed audio parts
+                delayed_inputs = "[0:a]" + "".join([f"[a{i+1}]" for i in range(len(audio_paths))])
+                
+                # Mix all audio with proper timing
+                audio_chain = f"{';'.join([p for p in audio_filter_parts if 'adelay' in p])};{delayed_inputs}amix=inputs={len(audio_paths)+1}:duration=longest[aout]"
                 filter_parts.append(audio_chain)
             
             # Apply filter_complex
