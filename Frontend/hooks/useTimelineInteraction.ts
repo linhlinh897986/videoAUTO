@@ -30,7 +30,7 @@ interface TimelineInteractionProps {
     timelineVisualDuration: number;
     zoom: number;
     onSelectSubtitle: (id: number, e: React.MouseEvent) => void;
-    onMarqueeSelect: (segmentIds: string[], subtitleIds: number[], isAdditive: boolean) => void;
+    onMarqueeSelect: (segmentIds: string[], subtitleIds: number[], audioIds: string[], isAdditive: boolean) => void;
     timelineRef: RefObject<HTMLDivElement>;
     containerRef: RefObject<HTMLDivElement>; // Ref for the scrolling container
 }
@@ -353,6 +353,7 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                 } else if (marqueeRect) {
                     const selectedSegIds: string[] = [];
                     const selectedSubIds: number[] = [];
+                    const selectedAudioIds: string[] = [];
                     
                     const contentWidth = timelineRef.current!.scrollWidth;
                     const marqueeStartSec = (marqueeRect.x / contentWidth) * timelineVisualDuration;
@@ -378,13 +379,31 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                     });
 
                     if (selectedSegIds.length === 0) {
+                        // Check audio files
+                        const audioTracksBaseY = RULER_HEIGHT + VIDEO_TRACK_HEIGHT + WAVEFORM_TRACK_HEIGHT;
+                        audioFiles.forEach(audio => {
+                            const audioStartSec = audio.startTime || 0;
+                            const audioEndSec = audioStartSec + (audio.duration || 0);
+                            const track = audio.track ?? 0;
+                            
+                            const audioTopPx = audioTracksBaseY + (track * TRACK_HEIGHT);
+                            const audioBottomPx = audioTopPx + TRACK_HEIGHT;
+
+                            if (marqueeEndSec > audioStartSec && marqueeStartSec < audioEndSec &&
+                                marqueeBottomPx > audioTopPx && marqueeTopPx < audioBottomPx) {
+                                selectedAudioIds.push(audio.id);
+                            }
+                        });
+
+                        // Check subtitle files
+                        const numAudioTracks = audioFiles.length > 0 ? Math.max(...audioFiles.map(a => a.track ?? 0)) + 1 : 0;
+                        const subtitlesBaseY = audioTracksBaseY + (numAudioTracks * TRACK_HEIGHT);
                         subtitles.forEach(sub => {
                             const subStartSec = srtTimeToSeconds(sub.startTime);
                             const subEndSec = srtTimeToSeconds(sub.endTime);
                             const track = sub.track ?? 0;
                             
-                            const audioTracksBaseY = RULER_HEIGHT + VIDEO_TRACK_HEIGHT + WAVEFORM_TRACK_HEIGHT + (audioFiles.length * TRACK_HEIGHT);
-                            const subTopPx = audioTracksBaseY + (track * TRACK_HEIGHT);
+                            const subTopPx = subtitlesBaseY + (track * TRACK_HEIGHT);
                             const subBottomPx = subTopPx + TRACK_HEIGHT;
 
                             if (marqueeEndSec > subStartSec && marqueeStartSec < subEndSec &&
@@ -393,7 +412,7 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                             }
                         });
                     }
-                    onMarqueeSelect(selectedSegIds, selectedSubIds, e.ctrlKey || e.metaKey);
+                    onMarqueeSelect(selectedSegIds, selectedSubIds, selectedAudioIds, e.ctrlKey || e.metaKey);
                 }
                 setMarqueeRect(null);
             }

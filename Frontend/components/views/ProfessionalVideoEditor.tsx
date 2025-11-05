@@ -84,8 +84,10 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]);
   const [selectedSubtitleIds, setSelectedSubtitleIds] = useState<number[]>([]);
+  const [selectedAudioIds, setSelectedAudioIds] = useState<string[]>([]);
   const [lastSelectedSegmentId, setLastSelectedSegmentId] = useState<string | null>(null);
   const [lastSelectedSubtitleId, setLastSelectedSubtitleId] = useState<number | null>(null);
+  const [lastSelectedAudioId, setLastSelectedAudioId] = useState<string | null>(null);
 
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -519,6 +521,16 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
       setEditorState(updateFn);
       setSelectedSubtitleIds([]);
   };
+
+  const handleDeleteAudio = (audioIdToDelete: string) => {
+      const updateFn = (prevState: EditorState) => ({
+          ...prevState,
+          audioFiles: prevState.audioFiles.filter(a => a.id !== audioIdToDelete),
+      });
+      setLiveEditorState(updateFn);
+      setEditorState(updateFn);
+      setSelectedAudioIds([]);
+  };
   
     const handleTimelineInteractionStart = useCallback(() => {
         isInteractingRef.current = true;
@@ -800,6 +812,9 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
                 if (selectedSegmentIds.length > 0) {
                     e.preventDefault();
                     selectedSegmentIds.forEach(handleDeleteVideoSegment)
+                } else if (selectedAudioIds.length > 0) {
+                    e.preventDefault();
+                    selectedAudioIds.forEach(handleDeleteAudio)
                 } else if (selectedSubtitleIds.length > 0) {
                     e.preventDefault();
                     selectedSubtitleIds.forEach(handleDeleteSubtitle)
@@ -809,7 +824,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlayPause, handleSplitItem, selectedSegmentIds, currentTime, selectedSubtitleIds, undo, redo, handleDeleteVideoSegment, handleDeleteSubtitle, handleSeek]);
+  }, [togglePlayPause, handleSplitItem, selectedSegmentIds, currentTime, selectedSubtitleIds, selectedAudioIds, undo, redo, handleDeleteVideoSegment, handleDeleteSubtitle, handleDeleteAudio, handleSeek]);
 
   const handleSelectSegment = (segmentId: string, e: React.MouseEvent) => {
     setSelectedSubtitleIds([]);
@@ -844,7 +859,9 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
 
 const handleSelectSubtitle = (subtitleId: number, e: React.MouseEvent) => {
     setSelectedSegmentIds([]);
+    setSelectedAudioIds([]);
     setLastSelectedSegmentId(null);
+    setLastSelectedAudioId(null);
 
     const isCtrlOrMeta = e.ctrlKey || e.metaKey;
     const isShift = e.shiftKey;
@@ -873,17 +890,54 @@ const handleSelectSubtitle = (subtitleId: number, e: React.MouseEvent) => {
     setLastSelectedSubtitleId(subtitleId);
 };
 
-const handleDeselectAll = () => {
+const handleSelectAudio = (audioId: string, e: React.MouseEvent) => {
     setSelectedSegmentIds([]);
     setSelectedSubtitleIds([]);
     setLastSelectedSegmentId(null);
     setLastSelectedSubtitleId(null);
+
+    const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+    const isShift = e.shiftKey;
+
+    const orderedAudioIds = audioFiles.map(a => a.id);
+
+    if (isShift && lastSelectedAudioId !== null && selectedAudioIds.length > 0) {
+        const lastIndex = orderedAudioIds.indexOf(lastSelectedAudioId);
+        const currentIndex = orderedAudioIds.indexOf(audioId);
+        if (lastIndex === -1 || currentIndex === -1) {
+            setSelectedAudioIds([audioId]);
+        } else {
+            const start = Math.min(lastIndex, currentIndex);
+            const end = Math.max(lastIndex, currentIndex);
+            setSelectedAudioIds(orderedAudioIds.slice(start, end + 1));
+        }
+    } else if (isCtrlOrMeta) {
+        setSelectedAudioIds(prev =>
+            prev.includes(audioId)
+                ? prev.filter(id => id !== audioId)
+                : [...prev, audioId]
+        );
+    } else {
+        setSelectedAudioIds(prev => (prev.length === 1 && prev[0] === audioId) ? prev : [audioId]);
+    }
+    setLastSelectedAudioId(audioId);
+};
+
+const handleDeselectAll = () => {
+    setSelectedSegmentIds([]);
+    setSelectedSubtitleIds([]);
+    setSelectedAudioIds([]);
+    setLastSelectedSegmentId(null);
+    setLastSelectedSubtitleId(null);
+    setLastSelectedAudioId(null);
 }
   
-const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAdditive: boolean) => {
+const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioIds: string[], isAdditive: boolean) => {
     if (segmentIds.length > 0) {
         setSelectedSubtitleIds([]);
+        setSelectedAudioIds([]);
         setLastSelectedSubtitleId(null);
+        setLastSelectedAudioId(null);
         setSelectedSegmentIds(prev => {
             if (isAdditive) {
                 const newSet = new Set([...prev, ...segmentIds]);
@@ -891,9 +945,23 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
             }
             return segmentIds;
         });
+    } else if (audioIds.length > 0) {
+        setSelectedSegmentIds([]);
+        setSelectedSubtitleIds([]);
+        setLastSelectedSegmentId(null);
+        setLastSelectedSubtitleId(null);
+        setSelectedAudioIds(prev => {
+            if (isAdditive) {
+                const newSet = new Set([...prev, ...audioIds]);
+                return Array.from(newSet);
+            }
+            return audioIds;
+        });
     } else if (subtitleIds.length > 0) {
         setSelectedSegmentIds([]);
+        setSelectedAudioIds([]);
         setLastSelectedSegmentId(null);
+        setLastSelectedAudioId(null);
         setSelectedSubtitleIds(prev => {
             if (isAdditive) {
                 const newSet = new Set([...prev, ...subtitleIds]);
@@ -1261,6 +1329,8 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
               onSelectSegment={handleSelectSegment}
               selectedSubtitleIds={selectedSubtitleIds}
               onSelectSubtitle={handleSelectSubtitle}
+              selectedAudioIds={selectedAudioIds}
+              onSelectAudio={handleSelectAudio}
               onDeselectAll={handleDeselectAll}
               onMarqueeSelect={handleMarqueeSelect}
               isMuted={isMuted}

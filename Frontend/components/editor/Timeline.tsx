@@ -32,8 +32,10 @@ interface TimelineProps {
     onSelectSegment: (id: string, e: React.MouseEvent) => void;
     selectedSubtitleIds: number[];
     onSelectSubtitle: (id: number, e: React.MouseEvent) => void;
+    selectedAudioIds: string[];
+    onSelectAudio: (id: string, e: React.MouseEvent) => void;
     onDeselectAll: () => void;
-    onMarqueeSelect: (segmentIds: string[], subtitleIds: number[], isAdditive: boolean) => void;
+    onMarqueeSelect: (segmentIds: string[], subtitleIds: number[], audioIds: string[], isAdditive: boolean) => void;
     isMuted: boolean;
     onToggleMute: () => void;
 }
@@ -59,7 +61,7 @@ const WAVEFORM_TRACK_HEIGHT = 80;
 const VIDEO_TRACK_HEIGHT = TRACK_HEIGHT;
 
 const Timeline: React.FC<TimelineProps> = (props) => {
-    const { subtitles, audioFiles, audioUrls, currentTime, timelineVisualDuration, zoom, isPlaying, videoFile, isOverlayVisible, onToggleOverlayVisibility, selectedSegmentIds, onSelectSegment, selectedSubtitleIds, onSelectSubtitle, onDeselectAll, isMuted, onToggleMute } = props;
+    const { subtitles, audioFiles, audioUrls, currentTime, timelineVisualDuration, zoom, isPlaying, videoFile, isOverlayVisible, onToggleOverlayVisibility, selectedSegmentIds, onSelectSegment, selectedSubtitleIds, onSelectSubtitle, selectedAudioIds, onSelectAudio, onDeselectAll, isMuted, onToggleMute } = props;
     const timelineContainerRef = useRef<HTMLDivElement>(null);
     const contentWrapperRef = useRef<HTMLDivElement>(null);
     const headerWrapperRef = useRef<HTMLDivElement>(null);
@@ -304,6 +306,8 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                                     audioUrl={audioUrls.get(audioFile.id) || null}
                                     timelineVisualDuration={timelineVisualDuration}
                                     getInteractionHandlers={getInteractionHandlers}
+                                    isSelected={selectedAudioIds.includes(audioFile.id)}
+                                    onSelect={onSelectAudio}
                                 />
                             </div>
                         ))}
