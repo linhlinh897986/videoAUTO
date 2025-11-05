@@ -991,7 +991,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
         has_blur_region = False
         blur_region_params = None
         
-        # Check if hardsub cover box needs blur (using modern drawbox with blur parameter)
+        # Check if hardsub cover box needs blur (using crop + boxblur + overlay method)
         if payload.hardsub_cover_box and payload.hardsub_cover_box.get("enabled"):
             box = payload.hardsub_cover_box
             # Convert percentage to pixels - will apply AFTER scaling to 1080p
@@ -1010,12 +1010,6 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
         video_filters.append("pad=1920:1080:(ow-iw)/2:(oh-ih)/2")
         video_filters.append("fps=30")
         
-        # Apply blur region using modern drawbox filter AFTER scaling (requires ffmpeg ≥5.1)
-        if has_blur_region:
-            params = blur_region_params
-            # Modern drawbox with blur parameter - much simpler and faster
-            video_filters.append(f"drawbox=x={params['x']}:y={params['y']}:w={params['w']}:h={params['h']}:color=black@0.0:t=fill:blur=20")
-        
         # Add subtitles if exists (must be last in video filter chain)
         if subtitle_file:
             # Fix path for Windows/Linux compatibility - use forward slashes and escape special chars
@@ -1023,7 +1017,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             video_filters.append(f"ass='{subtitle_path_str}'")
         
         # Combine video and audio processing
-        use_filter_complex = len(audio_paths) > 0 or frame_overlay_path  # Need filter_complex if mixing audio or overlaying
+        use_filter_complex = len(audio_paths) > 0 or frame_overlay_path or has_blur_region  # Need filter_complex if mixing audio, overlaying, or blurring
         
         if use_filter_complex:
             # Use filter_complex for both video and audio
@@ -1033,10 +1027,16 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             # Start with base video and apply all video filters
             video_stream = "[0:v]"
             
-            # Apply basic filters (drawbox blur, scale, pad, fps)
+            # Apply basic filters (scale, pad, fps) first to normalize to 1080p
             basic_filters = [f for f in video_filters if not f.startswith('[') and 'overlay' not in f and 'ass' not in f]
             if basic_filters:
                 video_stream = f"{video_stream}{','.join(basic_filters)}"
+            
+            # Apply blur region using crop + boxblur + overlay method (compatible with all ffmpeg versions)
+            if has_blur_region:
+                params = blur_region_params
+                # Split video into two streams, crop and blur one region, then overlay back
+                video_stream = f"{video_stream}[main];[main]split[v1][v2];[v2]crop={params['w']}:{params['h']}:{params['x']}:{params['y']},boxblur=luma_radius=20:luma_power=3[blurred];[v1][blurred]overlay={params['x']}:{params['y']}"
             
             # Apply overlay if frame exists (scale frame to 1920x1080 to match video)
             if frame_overlay_path:
