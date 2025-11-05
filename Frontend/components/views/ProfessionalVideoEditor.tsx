@@ -80,15 +80,20 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   const [isSeeking, setIsSeeking] = useState(false);
   const [currentPlaybackRate, setCurrentPlaybackRate] = useState(1);
   const [zoom, setZoom] = useState(1);
+  const [audioUrls, setAudioUrls] = useState<Map<string, string>>(new Map()); // Share URLs with Timeline
   
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]);
   const [selectedSubtitleIds, setSelectedSubtitleIds] = useState<number[]>([]);
+  const [selectedAudioIds, setSelectedAudioIds] = useState<string[]>([]);
   const [lastSelectedSegmentId, setLastSelectedSegmentId] = useState<string | null>(null);
   const [lastSelectedSubtitleId, setLastSelectedSubtitleId] = useState<number | null>(null);
+  const [lastSelectedAudioId, setLastSelectedAudioId] = useState<string | null>(null);
 
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const audioUrlsRef = useRef<Map<string, string>>(new Map()); // Store URLs separately
+  const playingAudioRef = useRef<Set<string>>(new Set()); // Track which audio is currently playing
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
@@ -516,6 +521,16 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
       setEditorState(updateFn);
       setSelectedSubtitleIds([]);
   };
+
+  const handleDeleteAudio = (audioIdToDelete: string) => {
+      const updateFn = (prevState: EditorState) => ({
+          ...prevState,
+          audioFiles: prevState.audioFiles.filter(a => a.id !== audioIdToDelete),
+      });
+      setLiveEditorState(updateFn);
+      setEditorState(updateFn);
+      setSelectedAudioIds([]);
+  };
   
     const handleTimelineInteractionStart = useCallback(() => {
         isInteractingRef.current = true;
@@ -569,6 +584,8 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   // Create and manage audio elements for TTS files
   useEffect(() => {
     const audioMap = audioElementsRef.current;
+    const urlMap = audioUrlsRef.current;
+    let cancelled = false;
     
     // Remove audio elements for deleted files
     const currentFileIds = new Set(audioFiles.map(f => f.id));
@@ -577,29 +594,79 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         audio.pause();
         audio.src = '';
         audioMap.delete(id);
+        
+        // Revoke the URL when removing audio
+        const url = urlMap.get(id);
+        if (url) {
+          URL.revokeObjectURL(url);
+          urlMap.delete(id);
+        }
       }
     }
     
-    // Create audio elements for new files
-    for (const audioFile of audioFiles) {
-      if (!audioMap.has(audioFile.id)) {
-        const audio = new Audio();
-        const audioUrl = getFileUrl(project.id, audioFile.id, audioFile.name);
-        audio.src = audioUrl;
-        audio.preload = 'auto';
-        audioMap.set(audioFile.id, audio);
+    // Create audio elements for new files (only if not already loaded)
+    const loadAudioFiles = async () => {
+      let hasNewUrls = false;
+      const newUrls = new Map(urlMap); // Start with existing URLs
+      
+      for (const audioFile of audioFiles) {
+        if (cancelled) break;
+        
+        // Skip if already loaded
+        if (audioMap.has(audioFile.id)) continue;
+        
+        try {
+          const audioUrl = await getFileUrl(audioFile.id);
+          if (cancelled) {
+            // Clean up the blob URL if component unmounted
+            if (audioUrl) {
+              URL.revokeObjectURL(audioUrl);
+            }
+            break;
+          }
+          
+          if (audioUrl) {
+            const audio = new Audio();
+            audio.src = audioUrl;
+            audio.preload = 'auto';
+            audio.loop = false;
+            
+            // Add event listeners for better error handling
+            audio.addEventListener('error', (e) => {
+              console.error(`Audio load error for ${audioFile.id}:`, e);
+            });
+            
+            audio.addEventListener('canplaythrough', () => {
+              console.log(`Audio ready to play: ${audioFile.id}`);
+            });
+            
+            audioMap.set(audioFile.id, audio);
+            urlMap.set(audioFile.id, audioUrl); // Store URL for later cleanup
+            newUrls.set(audioFile.id, audioUrl); // Add to new URLs map
+            hasNewUrls = true;
+          }
+        } catch (error) {
+          if (!cancelled) {
+            console.error(`Failed to load audio file ${audioFile.id}:`, error);
+          }
+        }
       }
-    }
+      
+      // Only update the shared URLs state if there are new URLs
+      // This prevents unnecessary re-renders and state updates when audio blocks are just moved
+      if (!cancelled && hasNewUrls) {
+        setAudioUrls(newUrls);
+      }
+    };
+    
+    loadAudioFiles();
     
     return () => {
-      // Cleanup on unmount
-      for (const audio of audioMap.values()) {
-        audio.pause();
-        audio.src = '';
-      }
-      audioMap.clear();
+      cancelled = true;
+      // Note: Don't clear or revoke on every effect run, only when component unmounts
+      // This prevents the audio from breaking when audioFiles array is recreated
     };
-  }, [audioFiles, project.id]);
+  }, [audioFiles]);
   
   useEffect(() => {
     const video = videoRef.current;
@@ -637,34 +704,47 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         // Handle audio playback for TTS files
         if (timelineTime !== null) {
             const audioMap = audioElementsRef.current;
+            const playingAudio = playingAudioRef.current;
+            
             for (const audioFile of audioFiles) {
                 const audio = audioMap.get(audioFile.id);
                 if (!audio) continue;
                 
-                const audioStart = audioFile.startTime;
+                const audioStart = audioFile.startTime || 0;
                 const audioEnd = audioStart + (audioFile.duration || 0);
                 const isInRange = timelineTime >= audioStart && timelineTime < audioEnd;
                 
                 if (isInRange && !video.paused) {
                     // Should be playing
                     const audioTime = timelineTime - audioStart;
-                    if (audio.paused || Math.abs(audio.currentTime - audioTime) > 0.2) {
+                    const timeDiff = Math.abs(audio.currentTime - audioTime);
+                    
+                    // Only sync if significantly out of sync (>0.3s) or if not playing
+                    if (audio.paused || timeDiff > 0.3) {
                         audio.currentTime = audioTime;
-                        audio.play().catch(err => console.warn('Audio play failed:', err));
+                        if (audio.paused) {
+                            audio.play().catch(err => {
+                                console.warn(`Audio play failed for ${audioFile.id}:`, err);
+                            });
+                            playingAudio.add(audioFile.id);
+                        }
                     }
                 } else {
                     // Should not be playing
                     if (!audio.paused) {
                         audio.pause();
+                        playingAudio.delete(audioFile.id);
                     }
                 }
             }
         } else {
             // Outside any segment - pause all audio
             const audioMap = audioElementsRef.current;
-            for (const audio of audioMap.values()) {
+            const playingAudio = playingAudioRef.current;
+            for (const [id, audio] of audioMap.entries()) {
                 if (!audio.paused) {
                     audio.pause();
+                    playingAudio.delete(id);
                 }
             }
         }
@@ -732,6 +812,9 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
                 if (selectedSegmentIds.length > 0) {
                     e.preventDefault();
                     selectedSegmentIds.forEach(handleDeleteVideoSegment)
+                } else if (selectedAudioIds.length > 0) {
+                    e.preventDefault();
+                    selectedAudioIds.forEach(handleDeleteAudio)
                 } else if (selectedSubtitleIds.length > 0) {
                     e.preventDefault();
                     selectedSubtitleIds.forEach(handleDeleteSubtitle)
@@ -741,7 +824,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlayPause, handleSplitItem, selectedSegmentIds, currentTime, selectedSubtitleIds, undo, redo, handleDeleteVideoSegment, handleDeleteSubtitle, handleSeek]);
+  }, [togglePlayPause, handleSplitItem, selectedSegmentIds, currentTime, selectedSubtitleIds, selectedAudioIds, undo, redo, handleDeleteVideoSegment, handleDeleteSubtitle, handleDeleteAudio, handleSeek]);
 
   const handleSelectSegment = (segmentId: string, e: React.MouseEvent) => {
     setSelectedSubtitleIds([]);
@@ -776,7 +859,9 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
 
 const handleSelectSubtitle = (subtitleId: number, e: React.MouseEvent) => {
     setSelectedSegmentIds([]);
+    setSelectedAudioIds([]);
     setLastSelectedSegmentId(null);
+    setLastSelectedAudioId(null);
 
     const isCtrlOrMeta = e.ctrlKey || e.metaKey;
     const isShift = e.shiftKey;
@@ -805,17 +890,54 @@ const handleSelectSubtitle = (subtitleId: number, e: React.MouseEvent) => {
     setLastSelectedSubtitleId(subtitleId);
 };
 
-const handleDeselectAll = () => {
+const handleSelectAudio = (audioId: string, e: React.MouseEvent) => {
     setSelectedSegmentIds([]);
     setSelectedSubtitleIds([]);
     setLastSelectedSegmentId(null);
     setLastSelectedSubtitleId(null);
+
+    const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+    const isShift = e.shiftKey;
+
+    const orderedAudioIds = audioFiles.map(a => a.id);
+
+    if (isShift && lastSelectedAudioId !== null && selectedAudioIds.length > 0) {
+        const lastIndex = orderedAudioIds.indexOf(lastSelectedAudioId);
+        const currentIndex = orderedAudioIds.indexOf(audioId);
+        if (lastIndex === -1 || currentIndex === -1) {
+            setSelectedAudioIds([audioId]);
+        } else {
+            const start = Math.min(lastIndex, currentIndex);
+            const end = Math.max(lastIndex, currentIndex);
+            setSelectedAudioIds(orderedAudioIds.slice(start, end + 1));
+        }
+    } else if (isCtrlOrMeta) {
+        setSelectedAudioIds(prev =>
+            prev.includes(audioId)
+                ? prev.filter(id => id !== audioId)
+                : [...prev, audioId]
+        );
+    } else {
+        setSelectedAudioIds(prev => (prev.length === 1 && prev[0] === audioId) ? prev : [audioId]);
+    }
+    setLastSelectedAudioId(audioId);
+};
+
+const handleDeselectAll = () => {
+    setSelectedSegmentIds([]);
+    setSelectedSubtitleIds([]);
+    setSelectedAudioIds([]);
+    setLastSelectedSegmentId(null);
+    setLastSelectedSubtitleId(null);
+    setLastSelectedAudioId(null);
 }
   
-const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAdditive: boolean) => {
+const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioIds: string[], isAdditive: boolean) => {
     if (segmentIds.length > 0) {
         setSelectedSubtitleIds([]);
+        setSelectedAudioIds([]);
         setLastSelectedSubtitleId(null);
+        setLastSelectedAudioId(null);
         setSelectedSegmentIds(prev => {
             if (isAdditive) {
                 const newSet = new Set([...prev, ...segmentIds]);
@@ -823,9 +945,23 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
             }
             return segmentIds;
         });
+    } else if (audioIds.length > 0) {
+        setSelectedSegmentIds([]);
+        setSelectedSubtitleIds([]);
+        setLastSelectedSegmentId(null);
+        setLastSelectedSubtitleId(null);
+        setSelectedAudioIds(prev => {
+            if (isAdditive) {
+                const newSet = new Set([...prev, ...audioIds]);
+                return Array.from(newSet);
+            }
+            return audioIds;
+        });
     } else if (subtitleIds.length > 0) {
         setSelectedSegmentIds([]);
+        setSelectedAudioIds([]);
         setLastSelectedSegmentId(null);
+        setLastSelectedAudioId(null);
         setSelectedSubtitleIds(prev => {
             if (isAdditive) {
                 const newSet = new Set([...prev, ...subtitleIds]);
@@ -1020,6 +1156,28 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
         }
     };
 
+  // Cleanup effect on component unmount
+  useEffect(() => {
+    return () => {
+      // Clean up all audio elements and URLs
+      const audioMap = audioElementsRef.current;
+      const urlMap = audioUrlsRef.current;
+      
+      for (const audio of audioMap.values()) {
+        audio.pause();
+        audio.src = '';
+      }
+      audioMap.clear();
+      
+      for (const url of urlMap.values()) {
+        URL.revokeObjectURL(url);
+      }
+      urlMap.clear();
+      
+      playingAudioRef.current.clear();
+    };
+  }, []);
+
   return (
     <div ref={editorContainerRef} className="bg-gray-900 text-white h-screen flex flex-col overflow-hidden">
       <header className="bg-gray-800 p-2 flex items-center justify-between border-b border-gray-700 flex-shrink-0 z-20">
@@ -1154,6 +1312,7 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
               videoUrl={videoUrl}
               subtitles={subtitles}
               audioFiles={audioFiles}
+              audioUrls={audioUrls}
               onTimelineUpdate={handleTimelineUpdate}
               onTimelineInteractionStart={handleTimelineInteractionStart}
               onTimelineInteractionEnd={handleTimelineInteractionEnd}
@@ -1170,6 +1329,8 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
               onSelectSegment={handleSelectSegment}
               selectedSubtitleIds={selectedSubtitleIds}
               onSelectSubtitle={handleSelectSubtitle}
+              selectedAudioIds={selectedAudioIds}
+              onSelectAudio={handleSelectAudio}
               onDeselectAll={handleDeselectAll}
               onMarqueeSelect={handleMarqueeSelect}
               isMuted={isMuted}

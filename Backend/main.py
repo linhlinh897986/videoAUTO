@@ -612,9 +612,9 @@ async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[
             subtitle_id = subtitle.get("id")
             start_time = subtitle.get("startTime", "00:00:00,000")
             
-            # Generate unique file ID
+            # Generate unique file ID and filename with project_id to avoid conflicts
             file_id = f"tts-{project_id}-{subtitle_id}-{dt.datetime.utcnow().timestamp()}"
-            filename = f"tts_subtitle_{subtitle_id}.mp3"
+            filename = f"tts_{project_id}_subtitle_{subtitle_id}.mp3"
             
             # Create temp file for TTS
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
