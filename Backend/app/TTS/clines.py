@@ -118,7 +118,7 @@ def synthesize_long_text(session_id: str,
             try:
                 audio = MP3(output_filename)
                 duration_ms = int(audio.info.length * 1000)  # Convert seconds to milliseconds
-            except Exception as e:
+            except (OSError, AttributeError, TypeError) as e:
                 print(f"Warning: Could not read MP3 duration: {e}")
                 duration_ms = 0
 
