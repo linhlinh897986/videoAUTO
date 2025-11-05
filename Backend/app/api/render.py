@@ -316,6 +316,8 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                 ffmpeg_cmd.extend(["-map", audio_output_label])
             elif audio_paths:
                 ffmpeg_cmd.extend(["-map", "[aout]"])
+            else:
+                ffmpeg_cmd.extend(["-map", "0:a?"])
         else:
             ffmpeg_cmd.extend(video_filters)
 
