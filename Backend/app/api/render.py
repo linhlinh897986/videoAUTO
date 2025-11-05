@@ -265,12 +265,12 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                         else:
                             tempo_filter = "atempo=1.0"
 
-                    audio_trim = (
-                        f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS"
-                    )
-                    audio_segment_filters.append(
-                        f"{audio_trim},{tempo_filter}[seg{i}a]"
-                    )
+                        audio_trim = (
+                            f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS"
+                        )
+                        audio_segment_filters.append(
+                            f"{audio_trim},{tempo_filter}[seg{i}a]"
+                        )
 
                     if audio_segment_filters:
                         filter_parts.append(";".join(audio_segment_filters))
