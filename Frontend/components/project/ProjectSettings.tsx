@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Project, ApiKey } from '../../types';
-import { AVAILABLE_MODELS } from '../../constants';
+import { AVAILABLE_MODELS, DEFAULT_TTS_VOICE } from '../../constants';
 import { PencilIcon, ChevronDownIcon } from '../ui/Icons';
+import { listTTSVoices, TTSVoice } from '../../services/ttsService';
 
 interface ProjectSettingsProps {
   project: Project;
@@ -46,6 +47,17 @@ const ProjectSettings: React.FC<ProjectSettingsProps> = ({
 }) => {
   const activeApiKeysCount = useMemo(() => apiKeys.filter(k => k.status === 'active').length, [apiKeys]);
   const maxConcurrency = activeApiKeysCount > 0 ? activeApiKeysCount * 4 : 1;
+  const [ttsVoices, setTtsVoices] = useState<TTSVoice[]>([]);
+  const [isLoadingVoices, setIsLoadingVoices] = useState(false);
+
+  // Load TTS voices on mount
+  useEffect(() => {
+    setIsLoadingVoices(true);
+    listTTSVoices()
+      .then(voices => setTtsVoices(voices))
+      .catch(err => console.error('Failed to load TTS voices:', err))
+      .finally(() => setIsLoadingVoices(false));
+  }, []);
 
   return (
     <div className="p-6 h-full overflow-y-auto">
@@ -189,6 +201,34 @@ const ProjectSettings: React.FC<ProjectSettingsProps> = ({
               </div>
             </div>
          </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection title="Text-to-Speech (TTS)">
+        <div className="space-y-4">
+          <div>
+            <h4 className="text-lg font-semibold mb-2 text-gray-200">Giọng Nói TTS</h4>
+            <p className="text-gray-400 mb-4">Chọn giọng nói mặc định để tạo âm thanh từ phụ đề đã dịch.</p>
+            <select
+              value={project.ttsVoice || DEFAULT_TTS_VOICE}
+              onChange={(e) => onUpdateProject(project.id, { ttsVoice: e.target.value })}
+              className="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+              disabled={isLoadingVoices}
+            >
+              {isLoadingVoices ? (
+                <option>Đang tải...</option>
+              ) : ttsVoices.length > 0 ? (
+                ttsVoices.map(voice => (
+                  <option key={voice.id} value={voice.id}>{voice.name}</option>
+                ))
+              ) : (
+                <option value={DEFAULT_TTS_VOICE}>{DEFAULT_TTS_VOICE} (Mặc định)</option>
+              )}
+            </select>
+            <p className="text-xs text-gray-500 mt-2">
+              Giọng nói này sẽ được sử dụng khi tạo TTS trong trình chỉnh sửa video.
+            </p>
+          </div>
+        </div>
       </CollapsibleSection>
     </div>
   );

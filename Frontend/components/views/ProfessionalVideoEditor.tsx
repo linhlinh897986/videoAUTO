@@ -2,14 +2,15 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Project, VideoFile, SrtFile, SubtitleBlock, VideoSegment, BoundingBox, SubtitleStyle, AudioFile } from '../../types';
 import { getVideoUrl, getFileUrl } from '../../services/projectService';
 import { srtTimeToSeconds, secondsToSrtTime } from '../../services/srtParser';
-import { BackArrowIcon, ChevronLeftIcon, ChevronRightIcon } from '../ui/Icons';
+import { BackArrowIcon, ChevronLeftIcon, ChevronRightIcon, RenderIcon } from '../ui/Icons';
 import VideoPlayer from '../editor/VideoPlayer';
 import SubtitleEditor from '../editor/SubtitleList';
 import StyleEditor from '../editor/StyleEditor';
 import Timeline from '../editor/Timeline';
 import EditorControls from '../editor/EditorControls';
 import { useHistoryState } from '../../hooks/useHistoryState';
-import { generateBatchTTS, listTTSVoices, TTSVoice } from '../../services/ttsService';
+import { generateBatchTTS } from '../../services/ttsService';
+import { DEFAULT_TTS_VOICE } from '../../constants';
 import Tesseract from 'tesseract.js';
 
 
@@ -98,8 +99,9 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
 
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
   const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
-  const [ttsVoices, setTtsVoices] = useState<TTSVoice[]>([]);
-  const [selectedTtsVoice, setSelectedTtsVoice] = useState<string>("BV421_vivn_streaming");
+  // Use project's TTS voice if set, otherwise use default
+  const selectedTtsVoice = project.ttsVoice || DEFAULT_TTS_VOICE;
+  const [isRendering, setIsRendering] = useState(false);
 
   const maxSubtitleEndTime = useMemo(() => {
     if (subtitles.length === 0) return 0;
@@ -1083,13 +1085,6 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
         onUpdateProject(project.id, { subtitleStyle: newStyle });
     };
 
-    // Load TTS voices on mount
-    useEffect(() => {
-        listTTSVoices()
-            .then(voices => setTtsVoices(voices))
-            .catch(err => console.error('Failed to load TTS voices:', err));
-    }, []);
-
     const handleGenerateTTS = async (subtitles: SubtitleBlock[]) => {
         if (subtitles.length === 0) {
             alert('Không có phụ đề để tạo TTS');
@@ -1156,6 +1151,65 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
         }
     };
 
+    const handleRenderVideo = async () => {
+        setIsRendering(true);
+        try {
+            const rawBase = import.meta.env.VITE_API_BASE_URL ?? '';
+            const API_BASE_URL = rawBase ? rawBase.replace(/\/$/, '') : '';
+            
+            // Prepare complete render data with ALL editing information
+            const renderPayload = {
+                video_file_id: videoFile.id,
+                video_segments: segments,
+                subtitles: subtitles,
+                audio_files: audioFiles,
+                subtitle_style: project.subtitleStyle,
+                hardsub_cover_box: hardsubCoverBox,
+                master_volume_db: masterVolumeDb,
+                video_frame_url: project.subtitleStyle?.videoFrameUrl,
+            };
+            
+            const response = await fetch(`${API_BASE_URL}/projects/${project.id}/render`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(renderPayload),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Render request failed: ${errorText || response.statusText}`);
+            }
+
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                alert(`✅ Render video thành công!\n\n` +
+                      `Tên file: ${result.output_filename}\n` +
+                      `Đường dẫn: ${result.output_path}\n` +
+                      `Thời lượng: ${result.duration_seconds?.toFixed(2) || 'N/A'}s\n` +
+                      `Video segments: ${result.video_segments_count}\n` +
+                      `Audio tracks: ${result.audio_tracks_count}\n` +
+                      `Subtitles: ${result.subtitles_count}`);
+            } else if (result.status === 'processing') {
+                alert(`⏳ Video đang được render...\n\n${result.message || 'Vui lòng chờ trong giây lát.'}`);
+            } else {
+                alert(`⚠️ ${result.message || 'Render không thành công'}`);
+            }
+        } catch (error) {
+            console.error('Failed to render video:', error);
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+            if (errorMsg.includes('Failed to fetch') || errorMsg.includes('ERR_CONNECTION_REFUSED')) {
+                alert('❌ Lỗi kết nối: Backend không chạy. Vui lòng khởi động backend trước khi render video.');
+            } else {
+                alert(`❌ Lỗi khi render video: ${errorMsg}`);
+            }
+        } finally {
+            setIsRendering(false);
+        }
+    };
+
   // Cleanup effect on component unmount
   useEffect(() => {
     return () => {
@@ -1189,6 +1243,15 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
           </div>
         </div>
         <div className="flex items-center space-x-2">
+            <button
+                onClick={handleRenderVideo}
+                disabled={isRendering}
+                className="bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-md flex items-center space-x-2"
+                title="Render video với tất cả chỉnh sửa"
+            >
+                <RenderIcon className="w-5 h-5" />
+                <span>{isRendering ? 'Đang render...' : 'Render Video'}</span>
+            </button>
             <button
                 onClick={() => navigateToVideo('previous')}
                 disabled={!canGoToPrevious}

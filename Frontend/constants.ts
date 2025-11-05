@@ -1,6 +1,8 @@
 // FIX: Updated to use only the allowed 'gemini-2.5-flash' model for general text tasks as per guidelines.
 export const AVAILABLE_MODELS = ['gemini-2.5-flash'];
 
+export const DEFAULT_TTS_VOICE = 'BV074_streaming'; // Default TTS voice ID
+
 export const TRACK_HEIGHT = 48; // px, height of a single subtitle track
 export const RULER_HEIGHT = 24; // px, height of the time ruler
 export const VIDEO_TRACK_HEIGHT = 48; // px, height of the video track in timeline

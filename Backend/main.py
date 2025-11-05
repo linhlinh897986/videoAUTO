@@ -510,14 +510,14 @@ def generate_missing_project_srts(
 
 class TTSRequest(BaseModel):
     text: str
-    voice: str = "BV421_vivn_streaming"  # Default Vietnamese voice
+    voice: str = "BV074_streaming"  # Default TTS voice (Cô gái hoạt ngôn)
     session_id: Optional[str] = None
 
 
 class TTSBatchRequest(BaseModel):
     """Generate TTS for multiple subtitle blocks"""
     subtitles: List[Dict[str, Any]]  # List of subtitle objects with id, text, startTime, endTime
-    voice: str = "BV421_vivn_streaming"
+    voice: str = "BV074_streaming"  # Default TTS voice (Cô gái hoạt ngôn)
     session_id: Optional[str] = None
 
 
@@ -813,6 +813,482 @@ async def import_videos_from_folder(project_id: str) -> Dict[str, Any]:
         "errors": errors,
         "count": len(imported_videos),
     }
+
+
+# --- Video Rendering -----------------------------------------------------------
+
+# --- Video Rendering -----------------------------------------------------------
+
+class VideoRenderRequest(BaseModel):
+    """Request to render a video with all editing data"""
+    video_file_id: str
+    video_segments: List[Dict[str, Any]]  # Video segments with timing, playback rates
+    subtitles: List[Dict[str, Any]]  # All subtitle blocks with text, timing, track
+    audio_files: List[Dict[str, Any]]  # Audio files with timing and track info
+    subtitle_style: Optional[Dict[str, Any]] = None
+    hardsub_cover_box: Optional[Dict[str, Any]] = None
+    master_volume_db: float = 0.0
+    video_frame_url: Optional[str] = None  # PNG frame overlay
+    output_filename: Optional[str] = None
+
+
+def _create_ass_subtitle_file(
+    subtitles: List[Dict[str, Any]], 
+    style: Optional[Dict[str, Any]],
+    output_path: Path
+) -> None:
+    """Create ASS subtitle file with styling for ffmpeg"""
+    # Default style
+    font_family = style.get("fontFamily", "Arial") if style else "Arial"
+    font_size = style.get("fontSize", 24) if style else 24
+    primary_color = style.get("primaryColor", "#FFFFFF") if style else "#FFFFFF"
+    outline_color = style.get("outlineColor", "#000000") if style else "#000000"
+    outline_width = style.get("outlineWidth", 2) if style else 2
+    vertical_margin = style.get("verticalMargin", 10) if style else 10
+    h_align = style.get("horizontalAlign", "center") if style else "center"
+    
+    # Convert hex color to ASS format (&HAABBGGRR)
+    def hex_to_ass(hex_color: str) -> str:
+        hex_color = hex_color.lstrip('#')
+        r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+        return f"&H00{b:02X}{g:02X}{r:02X}"
+    
+    primary_ass = hex_to_ass(primary_color)
+    outline_ass = hex_to_ass(outline_color)
+    
+    # ASS alignment (2=bottom center, 1=bottom left, 3=bottom right)
+    alignment = 2 if h_align == "center" else (1 if h_align == "left" else 3)
+    
+    # Create ASS content with proper UTF-8 BOM for Vietnamese support
+    ass_content = f"""[Script Info]
+Title: Rendered Subtitles
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+PlayResX: 1920
+PlayResY: 1080
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_family},{font_size},{primary_ass},&H000000FF,{outline_ass},&H80000000,0,0,0,0,100,100,0,0,1,{outline_width},0,{alignment},10,10,{vertical_margin},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    
+    # Convert SRT time to ASS time format (0:00:00.00)
+    def srt_to_ass_time(srt_time: str) -> str:
+        # SRT format: 00:00:00,000 -> ASS format: 0:00:00.00
+        time_part = srt_time.replace(',', '.')
+        parts = time_part.split(':')
+        if len(parts) == 3:
+            h, m, s = parts
+            s_parts = s.split('.')
+            if len(s_parts) == 2:
+                s, ms = s_parts
+                cs = ms[:2]  # centiseconds (first 2 digits of milliseconds)
+                return f"{int(h)}:{m}:{s}.{cs}"
+        return srt_time
+    
+    # Add subtitle events
+    for sub in subtitles:
+        start = srt_to_ass_time(sub.get("startTime", "00:00:00,000"))
+        end = srt_to_ass_time(sub.get("endTime", "00:00:00,000"))
+        text = sub.get("text", "").replace('\n', '\\N')
+        ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n"
+    
+    output_path.write_text(ass_content, encoding='utf-8-sig')  # UTF-8 with BOM for better compatibility
+
+
+@app.post("/projects/{project_id}/render")
+async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str, Any]:
+    """
+    Render video with ffmpeg using all editing information
+    """
+    import subprocess
+    
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    
+    # Get video file from database
+    video_data_tuple = db.get_file(payload.video_file_id)
+    if video_data_tuple is None:
+        raise HTTPException(status_code=404, detail=f"Video file not found: {payload.video_file_id}")
+    
+    video_data, content_type, filename = video_data_tuple
+    
+    # Check if ffmpeg is available
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        return {
+            "status": "error",
+            "message": "ffmpeg không được cài đặt trên server. Vui lòng cài đặt ffmpeg để render video.",
+            "video_segments_count": len(payload.video_segments),
+            "audio_tracks_count": len(payload.audio_files),
+            "subtitles_count": len(payload.subtitles),
+        }
+    
+    # Create temp directory for rendering
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        
+        # Save original video to temp file
+        input_video = temp_path / f"input{Path(filename).suffix}"
+        input_video.write_bytes(video_data)
+        
+        # Create subtitle file if subtitles exist
+        subtitle_file = None
+        if payload.subtitles and len(payload.subtitles) > 0:
+            subtitle_file = temp_path / "subtitles.ass"
+            _create_ass_subtitle_file(payload.subtitles, payload.subtitle_style, subtitle_file)
+        
+        # Save audio files
+        audio_paths = []
+        for i, audio_file in enumerate(payload.audio_files):
+            audio_id = audio_file.get("id")
+            if audio_id:
+                audio_tuple = db.get_file(audio_id)
+                if audio_tuple:
+                    audio_data, _, audio_name = audio_tuple
+                    audio_path = temp_path / f"audio_{i}_{audio_name}"
+                    audio_path.write_bytes(audio_data)
+                    audio_paths.append({
+                        "path": audio_path,
+                        "start_time": audio_file.get("startTime", 0),
+                        "track": audio_file.get("track", i)
+                    })
+        
+        # Save video frame overlay if provided
+        frame_overlay_path = None
+        if payload.video_frame_url and payload.video_frame_url.startswith('data:image/png;base64,'):
+            import base64
+            base64_data = payload.video_frame_url.split(',')[1]
+            frame_data = base64.b64decode(base64_data)
+            frame_overlay_path = temp_path / "frame_overlay.png"
+            frame_overlay_path.write_bytes(frame_data)
+        
+        # Build ffmpeg command
+        output_filename = payload.output_filename or f"rendered_{project_id}_{dt.datetime.utcnow().timestamp()}.mp4"
+        output_path = DATA_ROOT / project_id / "rendered" / output_filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Start with input video
+        ffmpeg_cmd = [ffmpeg_path, "-y", "-i", str(input_video)]
+        
+        # Add audio inputs
+        for audio_info in audio_paths:
+            ffmpeg_cmd.extend(["-i", str(audio_info["path"])])
+        
+        # Add frame overlay if exists
+        if frame_overlay_path:
+            ffmpeg_cmd.extend(["-i", str(frame_overlay_path)])
+        
+        # Build filter complex for both video and audio processing
+        filter_complex_parts = []
+        video_filters = []
+        has_blur_region = False
+        blur_region_params = None
+        
+        # Check if hardsub cover box needs blur (using crop + boxblur + overlay method)
+        if payload.hardsub_cover_box and payload.hardsub_cover_box.get("enabled"):
+            box = payload.hardsub_cover_box
+            # Convert percentage to pixels - will apply AFTER scaling to 1080p
+            x = int(box.get("x", 0) * 1920 / 100)
+            y = int(box.get("y", 0) * 1080 / 100)
+            w = int(box.get("width", 0) * 1920 / 100)
+            h = int(box.get("height", 0) * 1080 / 100)
+            has_blur_region = True
+            blur_region_params = {'x': x, 'y': y, 'w': w, 'h': h}
+        
+        # Note: frame overlay and blur will be handled in filter_complex
+        
+        # IMPORTANT: Scale to 1080p FIRST before applying blur or subtitles
+        # This ensures blur coordinates work correctly for any input resolution
+        video_filters.append("scale=1920:1080:force_original_aspect_ratio=decrease")
+        video_filters.append("pad=1920:1080:(ow-iw)/2:(oh-ih)/2")
+        video_filters.append("fps=30")
+        
+        # Add subtitles if exists (must be last in video filter chain)
+        if subtitle_file:
+            # Fix path for Windows/Linux compatibility - use forward slashes and escape special chars
+            subtitle_path_str = str(subtitle_file).replace('\\', '/').replace(':', r'\:')
+            video_filters.append(f"ass='{subtitle_path_str}'")
+        
+        # Combine video and audio processing
+        use_filter_complex = len(audio_paths) > 0 or frame_overlay_path or has_blur_region  # Need filter_complex if mixing audio, overlaying, or blurring
+        
+        if use_filter_complex:
+            # Use filter_complex for both video and audio
+            filter_parts = []
+            
+            # Video processing chain
+            # Start with base video
+            
+            # Process video segments (trim and speed adjustments) if provided
+            video_segments = payload.video_segments if hasattr(payload, 'video_segments') and payload.video_segments else None
+            
+            if video_segments and len(video_segments) >= 1:
+                # Process all segments: trim each, apply speed, then concatenate if multiple
+                segment_filters = []
+                for i, segment in enumerate(video_segments):
+                    start = segment.get("sourceStartTime", 0)
+                    end = segment.get("sourceEndTime", 0)
+                    rate = segment.get("playbackRate", 1.0)
+                    
+                    # Trim and apply speed adjustment
+                    # setpts scales timestamps: PTS/rate speeds up, PTS*rate slows down
+                    segment_filter = f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)/{rate}[seg{i}v]"
+                    segment_filters.append(segment_filter)
+                
+                filter_parts.append(";".join(segment_filters))
+                
+                if len(video_segments) > 1:
+                    # Multiple segments: concatenate them
+                    segment_labels = "".join([f"[seg{i}v]" for i in range(len(video_segments))])
+                    concat_filter = f"{segment_labels}concat=n={len(video_segments)}:v=1:a=0[raw_video]"
+                    filter_parts.append(concat_filter)
+                    video_stream = "[raw_video]"
+                else:
+                    # Single segment: use it directly
+                    video_stream = "[seg0v]"
+            else:
+                # No segments specified, use full video
+                video_stream = "[0:v]"
+            
+            # Apply basic filters (scale, pad, fps) to normalize to 1080p
+            basic_filters = [f for f in video_filters if not f.startswith('[') and 'overlay' not in f and 'ass' not in f]
+            if basic_filters:
+                video_stream = f"{video_stream}{','.join(basic_filters)}"
+            
+            # Apply blur region using crop + boxblur + overlay method (compatible with all ffmpeg versions)
+            if has_blur_region:
+                params = blur_region_params
+                # Split video into two streams, crop and blur one region, then overlay back
+                video_stream = f"{video_stream}[main];[main]split[v1][v2];[v2]crop={params['w']}:{params['h']}:{params['x']}:{params['y']},boxblur=luma_radius=20:luma_power=3[blurred];[v1][blurred]overlay={params['x']}:{params['y']}"
+            
+            # Apply overlay if frame exists (scale frame to 1920x1080 to match video)
+            if frame_overlay_path:
+                overlay_input_idx = 1 + len(audio_paths)
+                # Scale the frame overlay to match the normalized 1080p video
+                video_stream = f"{video_stream}[vtmp];[{overlay_input_idx}:v]scale=1920:1080[frame];[vtmp][frame]overlay=0:0"
+            
+            # Apply subtitles (must be last)
+            subtitle_filter = [f for f in video_filters if 'ass' in f]
+            if subtitle_filter:
+                video_stream = f"{video_stream},{subtitle_filter[0]}"
+            
+            video_stream = f"{video_stream}[vout]"
+            filter_parts.append(video_stream)
+            
+            # Audio mixing with proper timing
+            if len(audio_paths) > 0:
+                # Process original audio to match video segments
+                if video_segments and len(video_segments) > 0:
+                    # Process audio segments to match video
+                    audio_segment_filters = []
+                    for i, segment in enumerate(video_segments):
+                        start = segment.get("sourceStartTime", 0)
+                        end = segment.get("sourceEndTime", 0)
+                        rate = segment.get("playbackRate", 1.0)
+                        
+                        # Trim audio and adjust tempo to match video speed
+                        # atempo only supports 0.5-2.0 range, may need chaining for extreme values
+                        if 0.5 <= rate <= 2.0:
+                            tempo_filter = f"atempo={rate}"
+                        else:
+                            # Chain multiple atempo filters for rates outside 0.5-2.0
+                            tempo_filter = "atempo=1.0"  # Fallback
+                        
+                        audio_segment_filters.append(f"[0:a]trim=start={start}:end={end},{tempo_filter}[seg{i}a]")
+                    
+                    # Concatenate audio segments
+                    audio_segment_labels = "".join([f"[seg{i}a]" for i in range(len(video_segments))])
+                    audio_concat = f"{audio_segment_labels}concat=n={len(video_segments)}:v=0:a=1[orig_audio]"
+                    
+                    filter_parts.append(";".join(audio_segment_filters))
+                    filter_parts.append(audio_concat)
+                    
+                    base_audio = "[orig_audio]"
+                else:
+                    base_audio = "[0:a]"
+                
+                # Build audio filter chain with delays for TTS audio
+                audio_filter_parts = []
+                
+                # Add each TTS audio with adelay based on startTime
+                for i, audio_info in enumerate(audio_paths):
+                    start_time_ms = int(audio_info["start_time"] * 1000)  # Convert seconds to milliseconds
+                    # adelay filter delays audio to the correct position in timeline
+                    audio_filter_parts.append(f"[{i+1}:a]adelay={start_time_ms}|{start_time_ms}[a{i+1}]")
+                
+                # Join delayed audio parts
+                delayed_inputs = base_audio + "".join([f"[a{i+1}]" for i in range(len(audio_paths))])
+                
+                # Mix all audio with proper timing
+                audio_chain = f"{';'.join([p for p in audio_filter_parts if 'adelay' in p])};{delayed_inputs}amix=inputs={len(audio_paths)+1}:duration=longest[aout]"
+                filter_parts.append(audio_chain)
+            
+            # Apply filter_complex
+            ffmpeg_cmd.extend(["-filter_complex", ";".join(filter_parts)])
+            
+            # Map outputs
+            ffmpeg_cmd.extend(["-map", "[vout]"])
+            
+            if len(audio_paths) > 0:
+                ffmpeg_cmd.extend(["-map", "[aout]"])
+            else:
+                ffmpeg_cmd.extend(["-map", "0:a"])
+        else:
+            # Use simple -vf if no audio mixing or overlay needed
+            if video_filters:
+                # Just basic filters like drawbox with blur and ass
+                ffmpeg_cmd.extend(["-vf", ",".join(video_filters)])
+        
+        # Check for GPU encoder availability (NVENC for NVIDIA GPUs)
+        gpu_encoder = None
+        try:
+            # Check if h264_nvenc is available
+            probe_result = subprocess.run(
+                [ffmpeg_path, "-hide_banner", "-encoders"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            encoders_output = probe_result.stdout.decode('utf-8', errors='ignore')
+            if 'h264_nvenc' in encoders_output:
+                gpu_encoder = "h264_nvenc"
+        except Exception:
+            pass  # Fall back to CPU encoding
+        
+        # Output settings with GPU priority
+        output_settings = []
+        
+        # Video codec - prioritize GPU encoding
+        if gpu_encoder:
+            output_settings.extend(["-c:v", gpu_encoder])
+            output_settings.extend(["-preset", "p4"])  # NVENC preset (p1-p7, p4 is balanced)
+            output_settings.extend(["-cq", "23"])  # NVENC quality (similar to CRF)
+        else:
+            output_settings.extend(["-c:v", "libx264"])
+            output_settings.extend(["-preset", "medium"])
+            output_settings.extend(["-crf", "23"])
+        
+        # Audio codec
+        output_settings.extend(["-c:a", "aac", "-b:a", "192k"])
+        
+        # Output file
+        output_settings.append(str(output_path))
+        
+        ffmpeg_cmd.extend(output_settings)
+        
+        # Create log file path
+        log_file_path = output_path.parent / f"render_log_{dt.datetime.utcnow().timestamp()}.txt"
+        
+        # Run ffmpeg
+        try:
+            # Write command to log file
+            with open(log_file_path, 'w', encoding='utf-8') as log_file:
+                log_file.write("=" * 80 + "\n")
+                log_file.write("FFMPEG RENDER LOG\n")
+                log_file.write("=" * 80 + "\n\n")
+                log_file.write(f"Project ID: {project_id}\n")
+                log_file.write(f"Timestamp: {dt.datetime.utcnow().isoformat()}\n")
+                log_file.write(f"Output: {output_path}\n\n")
+                log_file.write("COMMAND:\n")
+                log_file.write(' '.join(ffmpeg_cmd) + "\n\n")
+                log_file.write("=" * 80 + "\n")
+                log_file.write("FFMPEG OUTPUT:\n")
+                log_file.write("=" * 80 + "\n\n")
+            
+            result = subprocess.run(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=600,  # 10 minute timeout
+                check=False
+            )
+            
+            # Decode outputs
+            stdout = result.stdout.decode('utf-8', errors='ignore')
+            stderr = result.stderr.decode('utf-8', errors='ignore')
+            
+            # Append output to log file
+            with open(log_file_path, 'a', encoding='utf-8') as log_file:
+                log_file.write("STDOUT:\n")
+                log_file.write(stdout + "\n\n")
+                log_file.write("STDERR:\n")
+                log_file.write(stderr + "\n\n")
+                log_file.write("=" * 80 + "\n")
+                log_file.write(f"Return Code: {result.returncode}\n")
+                log_file.write("=" * 80 + "\n")
+            
+            if result.returncode != 0:
+                # Show the last part of stderr which contains the actual error
+                stderr_lines = stderr.strip().split('\n')
+                # Get last 10 lines which usually contain the actual error
+                error_summary = '\n'.join(stderr_lines[-10:]) if len(stderr_lines) > 10 else stderr
+                
+                return {
+                    "status": "error",
+                    "message": f"ffmpeg rendering failed:\n{error_summary}",
+                    "ffmpeg_command": ' '.join(ffmpeg_cmd),  # Include command for debugging
+                    "log_file": str(log_file_path),  # Include log file path
+                    "video_segments_count": len(payload.video_segments),
+                    "audio_tracks_count": len(payload.audio_files),
+                    "subtitles_count": len(payload.subtitles),
+                }
+            
+            # Get output file info
+            file_size = output_path.stat().st_size
+            
+            # Get video duration using ffprobe
+            duration_seconds = None
+            try:
+                probe_result = subprocess.run(
+                    [ffmpeg_path.replace('ffmpeg', 'ffprobe'), "-v", "error", "-show_entries",
+                     "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(output_path)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False
+                )
+                if probe_result.returncode == 0:
+                    duration_seconds = float(probe_result.stdout.decode().strip())
+            except Exception:
+                pass
+            
+            return {
+                "status": "success",
+                "message": "Video rendered successfully!",
+                "log_file": str(log_file_path),  # Include log file path for success too
+                "output_filename": output_filename,
+                "output_path": str(output_path),
+                "file_size": file_size,
+                "duration_seconds": duration_seconds,
+                "video_segments_count": len(payload.video_segments),
+                "audio_tracks_count": len(payload.audio_files),
+                "subtitles_count": len(payload.subtitles),
+            }
+            
+        except subprocess.TimeoutExpired:
+            # Write timeout info to log
+            try:
+                with open(log_file_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write("\n" + "=" * 80 + "\n")
+                    log_file.write("TIMEOUT: Process exceeded 10 minutes\n")
+                    log_file.write("=" * 80 + "\n")
+            except Exception:
+                pass
+            
+            return {
+                "status": "error",
+                "message": "Rendering timeout (>10 minutes). Video may be too long or complex.",
+                "log_file": str(log_file_path) if log_file_path.exists() else None,
+                "video_segments_count": len(payload.video_segments),
+                "audio_tracks_count": len(payload.audio_files),
+                "subtitles_count": len(payload.subtitles),
+            }
 
 
 __all__ = ["app"]
