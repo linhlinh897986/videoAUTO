@@ -594,6 +594,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     
     // Create audio elements for new files (only if not already loaded)
     const loadAudioFiles = async () => {
+      let hasNewUrls = false;
       const newUrls = new Map(urlMap); // Start with existing URLs
       
       for (const audioFile of audioFiles) {
@@ -630,6 +631,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
             audioMap.set(audioFile.id, audio);
             urlMap.set(audioFile.id, audioUrl); // Store URL for later cleanup
             newUrls.set(audioFile.id, audioUrl); // Add to new URLs map
+            hasNewUrls = true;
           }
         } catch (error) {
           if (!cancelled) {
@@ -638,8 +640,9 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         }
       }
       
-      // Update the shared URLs state for Timeline
-      if (!cancelled) {
+      // Only update the shared URLs state if there are new URLs
+      // This prevents unnecessary re-renders and state updates when audio blocks are just moved
+      if (!cancelled && hasNewUrls) {
         setAudioUrls(newUrls);
       }
     };
