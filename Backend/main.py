@@ -1029,8 +1029,8 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             # Process video segments (trim and speed adjustments) if provided
             video_segments = payload.video_segments if hasattr(payload, 'video_segments') and payload.video_segments else None
             
-            if video_segments and len(video_segments) > 1:
-                # Multiple segments: trim each, apply speed, then concatenate
+            if video_segments and len(video_segments) >= 1:
+                # Process all segments: trim each, apply speed, then concatenate if multiple
                 segment_filters = []
                 for i, segment in enumerate(video_segments):
                     start = segment.get("sourceStartTime", 0)
@@ -1042,22 +1042,17 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
                     segment_filter = f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)/{rate}[seg{i}v]"
                     segment_filters.append(segment_filter)
                 
-                # Concatenate all segments
-                segment_labels = "".join([f"[seg{i}v]" for i in range(len(video_segments))])
-                concat_filter = f"{segment_labels}concat=n={len(video_segments)}:v=1:a=0[raw_video]"
-                
                 filter_parts.append(";".join(segment_filters))
-                filter_parts.append(concat_filter)
                 
-                video_stream = "[raw_video]"
-            elif video_segments and len(video_segments) == 1:
-                # Single segment: just trim and apply speed
-                segment = video_segments[0]
-                start = segment.get("sourceStartTime", 0)
-                end = segment.get("sourceEndTime", 0)
-                rate = segment.get("playbackRate", 1.0)
-                
-                video_stream = f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)/{rate}"
+                if len(video_segments) > 1:
+                    # Multiple segments: concatenate them
+                    segment_labels = "".join([f"[seg{i}v]" for i in range(len(video_segments))])
+                    concat_filter = f"{segment_labels}concat=n={len(video_segments)}:v=1:a=0[raw_video]"
+                    filter_parts.append(concat_filter)
+                    video_stream = "[raw_video]"
+                else:
+                    # Single segment: use it directly
+                    video_stream = "[seg0v]"
             else:
                 # No segments specified, use full video
                 video_stream = "[0:v]"
