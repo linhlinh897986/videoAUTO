@@ -172,6 +172,36 @@ def generate_missing_project_srts(
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
     project_files = project.get("files") or []
+
+    def _is_tts_generated_audio(file_obj: Dict[str, Any]) -> bool:
+        """Detect audio tracks that were produced by the batch TTS generator."""
+
+        if not isinstance(file_obj, dict):
+            return False
+        if file_obj.get("type") != "audio":
+            return False
+
+        file_id = str(file_obj.get("id") or "")
+        if file_id.startswith("tts-"):
+            return True
+
+        raw_name = str(file_obj.get("name") or "")
+        normalized_name = raw_name.lower()
+        if normalized_name.startswith("tts_") and "_subtitle_" in normalized_name:
+            return True
+
+        storage_path = (
+            file_obj.get("storagePath")
+            or file_obj.get("storage_path")
+            or ""
+        )
+        if storage_path:
+            storage_name = Path(str(storage_path)).name.lower()
+            if storage_name.startswith("tts_") and "_subtitle_" in storage_name:
+                return True
+
+        return False
+
     media_files = [
         f
         for f in project_files
@@ -220,6 +250,8 @@ def generate_missing_project_srts(
         name = media.get("name")
         file_id = media.get("id")
         if not name or not file_id:
+            continue
+        if _is_tts_generated_audio(media):
             continue
         audio_index.setdefault(Path(name).stem.lower(), media)
 
@@ -294,6 +326,10 @@ def generate_missing_project_srts(
 
         stem = Path(media_name).stem
         stem_lower = stem.lower()
+
+        if _is_tts_generated_audio(media):
+            _append_skip(media, "tts-generated-audio")
+            continue
 
         if stem_lower in processed_targets:
             continue
