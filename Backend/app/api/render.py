@@ -43,7 +43,7 @@ def _adjust_time_for_segments(
     Returns:
         Adjusted time in seconds for the output timeline
     """
-    if not video_segments or len(video_segments) == 0:
+    if not video_segments:
         return source_time_seconds
     
     output_time = 0.0
@@ -326,16 +326,31 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                         end = segment.get("sourceEndTime", 0)
                         rate = segment.get("playbackRate", 1.0)
 
-                        if 0.5 <= rate <= 2.0:
-                            tempo_filter = f"atempo={rate}"
+                        # FFmpeg atempo filter only supports 0.5-2.0 range
+                        # For extreme rates, chain multiple atempo filters
+                        if rate == 1.0:
+                            tempo_filter = ""
+                        elif 0.5 <= rate <= 2.0:
+                            tempo_filter = f",atempo={rate}"
                         else:
-                            tempo_filter = "atempo=1.0"
+                            # Chain atempo filters for extreme rates
+                            tempo_filters = []
+                            current_rate = rate
+                            while current_rate > 2.0:
+                                tempo_filters.append("atempo=2.0")
+                                current_rate /= 2.0
+                            while current_rate < 0.5:
+                                tempo_filters.append("atempo=0.5")
+                                current_rate /= 0.5
+                            if current_rate != 1.0:
+                                tempo_filters.append(f"atempo={current_rate}")
+                            tempo_filter = "," + ",".join(tempo_filters) if tempo_filters else ""
 
                         audio_trim = (
                             f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS"
                         )
                         audio_segment_filters.append(
-                            f"{audio_trim},{tempo_filter}[seg{i}a]"
+                            f"{audio_trim}{tempo_filter}[seg{i}a]"
                         )
 
                     if audio_segment_filters:
