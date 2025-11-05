@@ -590,8 +590,10 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
           try {
             const audioUrl = await getFileUrl(audioFile.id);
             if (cancelled) {
-              // Clean up the URL if component unmounted
-              if (audioUrl) URL.revokeObjectURL(audioUrl);
+              // Clean up the blob URL if component unmounted
+              if (audioUrl) {
+                URL.revokeObjectURL(audioUrl);
+              }
               break;
             }
             
@@ -621,7 +623,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
       }
       audioMap.clear();
     };
-  }, [audioFiles, project.id]);
+  }, [audioFiles]);
   
   useEffect(() => {
     const video = videoRef.current;
