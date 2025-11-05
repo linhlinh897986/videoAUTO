@@ -1024,10 +1024,45 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             filter_parts = []
             
             # Video processing chain
-            # Start with base video and apply all video filters
-            video_stream = "[0:v]"
+            # Start with base video
             
-            # Apply basic filters (scale, pad, fps) first to normalize to 1080p
+            # Process video segments (trim and speed adjustments) if provided
+            video_segments = payload.video_segments if hasattr(payload, 'video_segments') and payload.video_segments else None
+            
+            if video_segments and len(video_segments) > 1:
+                # Multiple segments: trim each, apply speed, then concatenate
+                segment_filters = []
+                for i, segment in enumerate(video_segments):
+                    start = segment.get("sourceStartTime", 0)
+                    end = segment.get("sourceEndTime", 0)
+                    rate = segment.get("playbackRate", 1.0)
+                    
+                    # Trim and apply speed adjustment
+                    # setpts scales timestamps: PTS/rate speeds up, PTS*rate slows down
+                    segment_filter = f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)/{rate}[seg{i}v]"
+                    segment_filters.append(segment_filter)
+                
+                # Concatenate all segments
+                segment_labels = "".join([f"[seg{i}v]" for i in range(len(video_segments))])
+                concat_filter = f"{segment_labels}concat=n={len(video_segments)}:v=1:a=0[raw_video]"
+                
+                filter_parts.append(";".join(segment_filters))
+                filter_parts.append(concat_filter)
+                
+                video_stream = "[raw_video]"
+            elif video_segments and len(video_segments) == 1:
+                # Single segment: just trim and apply speed
+                segment = video_segments[0]
+                start = segment.get("sourceStartTime", 0)
+                end = segment.get("sourceEndTime", 0)
+                rate = segment.get("playbackRate", 1.0)
+                
+                video_stream = f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)/{rate}"
+            else:
+                # No segments specified, use full video
+                video_stream = "[0:v]"
+            
+            # Apply basic filters (scale, pad, fps) to normalize to 1080p
             basic_filters = [f for f in video_filters if not f.startswith('[') and 'overlay' not in f and 'ass' not in f]
             if basic_filters:
                 video_stream = f"{video_stream}{','.join(basic_filters)}"
@@ -1054,11 +1089,38 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             
             # Audio mixing with proper timing
             if len(audio_paths) > 0:
-                # Build audio filter chain with delays for proper timeline positioning
-                audio_filter_parts = []
+                # Process original audio to match video segments
+                if video_segments and len(video_segments) > 0:
+                    # Process audio segments to match video
+                    audio_segment_filters = []
+                    for i, segment in enumerate(video_segments):
+                        start = segment.get("sourceStartTime", 0)
+                        end = segment.get("sourceEndTime", 0)
+                        rate = segment.get("playbackRate", 1.0)
+                        
+                        # Trim audio and adjust tempo to match video speed
+                        # atempo only supports 0.5-2.0 range, may need chaining for extreme values
+                        if 0.5 <= rate <= 2.0:
+                            tempo_filter = f"atempo={rate}"
+                        else:
+                            # Chain multiple atempo filters for rates outside 0.5-2.0
+                            tempo_filter = "atempo=1.0"  # Fallback
+                        
+                        audio_segment_filters.append(f"[0:a]trim=start={start}:end={end},{tempo_filter}[seg{i}a]")
+                    
+                    # Concatenate audio segments
+                    audio_segment_labels = "".join([f"[seg{i}a]" for i in range(len(video_segments))])
+                    audio_concat = f"{audio_segment_labels}concat=n={len(video_segments)}:v=0:a=1[orig_audio]"
+                    
+                    filter_parts.append(";".join(audio_segment_filters))
+                    filter_parts.append(audio_concat)
+                    
+                    base_audio = "[orig_audio]"
+                else:
+                    base_audio = "[0:a]"
                 
-                # Original audio (no delay needed)
-                audio_filter_parts.append("[0:a]")
+                # Build audio filter chain with delays for TTS audio
+                audio_filter_parts = []
                 
                 # Add each TTS audio with adelay based on startTime
                 for i, audio_info in enumerate(audio_paths):
@@ -1067,7 +1129,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
                     audio_filter_parts.append(f"[{i+1}:a]adelay={start_time_ms}|{start_time_ms}[a{i+1}]")
                 
                 # Join delayed audio parts
-                delayed_inputs = "[0:a]" + "".join([f"[a{i+1}]" for i in range(len(audio_paths))])
+                delayed_inputs = base_audio + "".join([f"[a{i+1}]" for i in range(len(audio_paths))])
                 
                 # Mix all audio with proper timing
                 audio_chain = f"{';'.join([p for p in audio_filter_parts if 'adelay' in p])};{delayed_inputs}amix=inputs={len(audio_paths)+1}:duration=longest[aout]"
