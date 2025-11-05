@@ -24,7 +24,7 @@ const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, ti
             style={{ left: `${left}%`, width: `${width}%`, top: '4px' }}
             onMouseDown={getInteractionHandlers('audio', audioFile.id).onMouseDown}
         >
-            <div className="absolute inset-0 opacity-20 overflow-hidden rounded">
+            <div className="absolute inset-0 opacity-20 overflow-hidden rounded pointer-events-none">
                 {audioUrl && duration > 0 && (
                     <Waveform
                         videoUrl={audioUrl}
@@ -33,7 +33,7 @@ const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, ti
                     />
                 )}
             </div>
-            <AudioWaveIcon className="w-4 h-4 text-purple-300 mr-2 flex-shrink-0 z-10" />
+            <AudioWaveIcon className="w-4 h-4 text-purple-300 mr-2 flex-shrink-0 z-10 pointer-events-none" />
             <p className="text-xs text-white truncate pointer-events-none z-10">{name}</p>
         </div>
     );
