@@ -988,14 +988,18 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
         filter_complex_parts = []
         video_filters = []
         
-        # Apply hardsub cover box if specified
+        # Apply hardsub cover box if specified (blur/frosted effect instead of solid black)
         if payload.hardsub_cover_box and payload.hardsub_cover_box.get("enabled"):
             box = payload.hardsub_cover_box
             x = int(box.get("x", 0) * 1920 / 100)  # Convert percentage to pixels (assuming 1920x1080)
             y = int(box.get("y", 0) * 1080 / 100)
             w = int(box.get("width", 0) * 1920 / 100)
             h = int(box.get("height", 0) * 1080 / 100)
-            video_filters.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill")
+            # Use boxblur to create a frosted/blurred overlay effect in the specified region
+            # boxblur with enable expression to only blur the specified region
+            video_filters.append(
+                f"boxblur=enable='between(y,{y},{y+h})*between(x,{x},{x+w})':luma_radius=20:luma_power=3"
+            )
         
         # Note: frame overlay will be handled in filter_complex
         
