@@ -69,7 +69,7 @@ const App: React.FC = () => {
 
     // --- Data Handlers ---
 
-    const handleAddProject = (name: string) => {
+    const handleAddProject = async (name: string) => {
         const newProject: Project = {
             id: Date.now().toString(),
             name,
@@ -97,46 +97,85 @@ const App: React.FC = () => {
             autoAnalyzeHardsubs: true,
             autoGenerateWaveform: true,
         };
-        
-        const newProjects = [...projects, newProject];
-        setProjects(newProjects);
+
+        setProjects(prev => [...prev, newProject]);
         setSelectedProjectId(newProject.id);
-        dataService.saveProject(newProject);
+
+        try {
+            await dataService.saveProject(newProject);
+        } catch (error) {
+            console.error('Failed to save project:', error);
+            setProjects(prev => prev.filter(p => p.id !== newProject.id));
+            setSelectedProjectId(prev => (prev === newProject.id ? null : prev));
+            alert(`Không thể lưu dự án mới. Lỗi: ${error instanceof Error ? error.message : String(error)}.`);
+        }
     };
-    
-    const handleDeleteProject = (id: string) => {
-        const newProjects = projects.filter(proj => proj.id !== id);
-        setProjects(newProjects);
-        if (selectedProjectId === id) {
+
+    const handleDeleteProject = async (id: string) => {
+        const previousProjects = projects;
+        const wasSelected = selectedProjectId === id;
+        setProjects(previousProjects.filter(proj => proj.id !== id));
+        if (wasSelected) {
             setSelectedProjectId(null);
         }
-        dataService.deleteProject(id);
+
+        try {
+            await dataService.deleteProject(id);
+        } catch (error) {
+            console.error('Failed to delete project:', error);
+            setProjects(previousProjects);
+            if (wasSelected) {
+                setSelectedProjectId(id);
+            }
+            alert(`Không thể xóa dự án. Lỗi: ${error instanceof Error ? error.message : String(error)}.`);
+        }
     };
-    
+
     const handleUpdateProject = (projectId: string, updates: Partial<Project> | ((p: Project) => Partial<Project>)) => {
-        setProjects(currentProjects => 
+        let previousProject: Project | null = null;
+        let updatedProject: Project | null = null;
+
+        setProjects(currentProjects =>
             currentProjects.map(p => {
                 if (p.id === projectId) {
+                    previousProject = p;
                     const newValues = typeof updates === 'function' ? updates(p) : updates;
-                    const updatedProject = { ...p, ...newValues };
-                    
-                    dataService.saveProject(updatedProject);
-                    
+                    updatedProject = { ...p, ...newValues };
                     return updatedProject;
                 }
                 return p;
             })
         );
+
+        if (updatedProject) {
+            void dataService.saveProject(updatedProject).catch(error => {
+                console.error('Failed to update project:', error);
+                if (previousProject) {
+                    setProjects(current => current.map(p => (p.id === projectId ? previousProject as Project : p)));
+                }
+                alert(`Không thể cập nhật dự án. Lỗi: ${error instanceof Error ? error.message : String(error)}.`);
+            });
+        }
     };
 
-    const handleUpdateApiKeys = (keys: ApiKey[]) => {
+    const handleUpdateApiKeys = async (keys: ApiKey[]) => {
         setApiKeys(keys);
-        dataService.saveApiKeys(keys);
+        try {
+            await dataService.saveApiKeys(keys);
+        } catch (error) {
+            console.error('Failed to save API keys:', error);
+            alert(`Không thể lưu API key. Lỗi: ${error instanceof Error ? error.message : String(error)}.`);
+        }
     };
 
-    const handleUpdateCustomStyles = (styles: CustomStyle[]) => {
+    const handleUpdateCustomStyles = async (styles: CustomStyle[]) => {
         setCustomStyles(styles);
-        dataService.saveCustomStyles(styles);
+        try {
+            await dataService.saveCustomStyles(styles);
+        } catch (error) {
+            console.error('Failed to save custom styles:', error);
+            alert(`Không thể lưu phong cách tùy chỉnh. Lỗi: ${error instanceof Error ? error.message : String(error)}.`);
+        }
     };
     
     const handleSelectProject = (id: string) => {

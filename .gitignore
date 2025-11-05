@@ -1,0 +1,19 @@
+# Node
+Frontend/node_modules/
+Frontend/dist/
+Frontend/package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+.env.*
+
+# Database files
+Backend/data/
+
+# Logs
+.colab-logs/
+.ngrok-bin/

@@ -55,6 +55,9 @@ export interface VideoFile {
   segments: VideoSegment[];
   hardsubCoverBox?: BoundingBox;
   masterVolumeDb?: number; // Master volume for the entire video track in dB
+  storagePath?: string;
+  fileSize?: number;
+  uploadedAt?: string;
 }
 
 export interface AudioFile {
@@ -64,6 +67,9 @@ export interface AudioFile {
   duration?: number;
   startTime?: number; // Time in seconds on the timeline
   track?: number;
+  storagePath?: string;
+  fileSize?: number;
+  uploadedAt?: string;
 }
 
 export interface ContextItem {

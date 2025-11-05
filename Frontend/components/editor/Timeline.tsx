@@ -8,7 +8,7 @@ import useTimelineInteraction from '../../hooks/useTimelineInteraction';
 import { TRACK_HEIGHT, RULER_HEIGHT } from '../../constants';
 import { FilmIcon, EyeIcon, EyeSlashIcon, SpeakerWaveIcon, SpeakerXMarkIcon } from '../ui/Icons';
 import { EditorState } from '../views/ProfessionalVideoEditor';
-import { getVideoUrl } from '../../services/projectService';
+import { getVideoUrl, getFileUrl } from '../../services/projectService';
 
 interface TimelineProps {
     videoUrl: string | null;
@@ -77,7 +77,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
         const loadUrls = async () => {
             for (const audioFile of audioFiles) {
                 try {
-                    const url = await getVideoUrl(audioFile.id);
+                    const url = await getFileUrl(audioFile.id);
                     if (url) {
                         urls.set(audioFile.id, url);
                     }
