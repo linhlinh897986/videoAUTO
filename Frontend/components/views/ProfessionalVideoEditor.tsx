@@ -581,15 +581,25 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     }
     
     // Create audio elements for new files
-    for (const audioFile of audioFiles) {
-      if (!audioMap.has(audioFile.id)) {
-        const audio = new Audio();
-        const audioUrl = getFileUrl(project.id, audioFile.id, audioFile.name);
-        audio.src = audioUrl;
-        audio.preload = 'auto';
-        audioMap.set(audioFile.id, audio);
+    const loadAudioFiles = async () => {
+      for (const audioFile of audioFiles) {
+        if (!audioMap.has(audioFile.id)) {
+          const audio = new Audio();
+          try {
+            const audioUrl = await getFileUrl(audioFile.id);
+            if (audioUrl) {
+              audio.src = audioUrl;
+              audio.preload = 'auto';
+              audioMap.set(audioFile.id, audio);
+            }
+          } catch (error) {
+            console.error(`Failed to load audio file ${audioFile.id}:`, error);
+          }
+        }
       }
-    }
+    };
+    
+    loadAudioFiles();
     
     return () => {
       // Cleanup on unmount
