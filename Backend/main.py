@@ -996,8 +996,9 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             w = int(box.get("width", 0) * 1920 / 100)
             h = int(box.get("height", 0) * 1080 / 100)
             # Use boxblur to create a frosted/blurred overlay effect in the specified region
-            # Note: enable expression must not have quotes around it in the filter string
-            enable_expr = f"between(y\\,{y}\\,{y+h})*between(x\\,{x}\\,{x+w})"
+            # Use gte/lte instead of between to avoid comma escaping issues
+            # enable=1 when (y>=Y1 AND y<=Y2 AND x>=X1 AND x<=X2)
+            enable_expr = f"gte(Y\\,{y})*lte(Y\\,{y+h})*gte(X\\,{x})*lte(X\\,{x+w})"
             video_filters.append(
                 f"boxblur=luma_radius=20:luma_power=3:enable='{enable_expr}'"
             )
