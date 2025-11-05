@@ -29,7 +29,14 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
   
   const srtFiles = useMemo(() => project.files.filter((f): f is SrtFile => f.type === 'srt'), [project.files]);
   const sortedFiles = useMemo(() => {
-    return [...project.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    // Filter out TTS-generated audio files (they are managed in the editor timeline, not in files tab)
+    const filesWithoutTTS = project.files.filter(f => {
+      if (f.type === 'audio' && f.id.startsWith('tts-')) {
+        return false; // Exclude TTS-generated audio files
+      }
+      return true;
+    });
+    return [...filesWithoutTTS].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
   }, [project.files]);
   
   const totalTokens = useMemo(() => srtFiles.reduce((acc, file) => acc + (file.tokenCount || 0), 0), [srtFiles]);
