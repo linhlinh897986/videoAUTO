@@ -12,8 +12,7 @@ class Database:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._file_root = self._db_path.parent / "files"
-        self._file_root.mkdir(parents=True, exist_ok=True)
+        self._data_root = self._db_path.parent  # data/ folder
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -155,10 +154,11 @@ class Database:
         if not file_id:
             raise ValueError("File ID must be provided")
 
-        # Persist file on disk so large media assets remain accessible outside the database
-        safe_filename = Path(file_id).name or filename
+        # Persist file on disk: data/{project_id}/files/{filename}
+        # Use filename parameter for the actual file, sanitize it for safety
+        safe_filename = Path(filename).name
         project_folder = project_id or "unassigned"
-        target_dir = self._file_root / project_folder
+        target_dir = self._data_root / project_folder / "files"
         target_dir.mkdir(parents=True, exist_ok=True)
         storage_path = target_dir / safe_filename
         storage_path.write_bytes(data)

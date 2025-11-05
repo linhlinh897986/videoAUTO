@@ -113,6 +113,9 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
     return URL.createObjectURL(blob);
 };
 
+// Alias for getVideoUrl - works for any file type (video, audio, etc.)
+export const getFileUrl = getVideoUrl;
+
 export const deleteVideo = async (id: string): Promise<void> => {
     const response = await fetch(`${API_BASE_URL}/files/${id}`, { method: 'DELETE' });
     if (!response.ok && response.status !== 404) {
@@ -186,5 +189,47 @@ export const saveCustomStyles = async (styles: CustomStyle[]): Promise<void> => 
     await jsonFetch('/custom-styles', {
         method: 'PUT',
         body: JSON.stringify(styles),
+    });
+};
+
+// --- VIDEO AUTO-IMPORT ---------------------------------------------------------
+export interface VideoInFolder {
+    filename: string;
+    path: string;
+    size: number;
+}
+
+export interface ScanVideoFolderResponse {
+    status: string;
+    videos: VideoInFolder[];
+    folder: string;
+    count: number;
+    message?: string;
+}
+
+export interface ImportedVideo {
+    file_id: string;
+    filename: string;
+    storage_path: string;
+    file_size: number;
+    created_at: string;
+}
+
+export interface ImportVideosResponse {
+    status: string;
+    project_id: string;
+    imported: ImportedVideo[];
+    errors: Array<{ filename: string; error: string }>;
+    count: number;
+    message?: string;
+}
+
+export const scanVideoFolder = async (projectId: string): Promise<ScanVideoFolderResponse> => {
+    return await jsonFetch<ScanVideoFolderResponse>(`/projects/${projectId}/videos/scan-folder`);
+};
+
+export const importVideosFromFolder = async (projectId: string): Promise<ImportVideosResponse> => {
+    return await jsonFetch<ImportVideosResponse>(`/projects/${projectId}/videos/import-from-folder`, {
+        method: 'POST',
     });
 };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Project, VideoFile, SrtFile, SubtitleBlock, VideoSegment, BoundingBox, SubtitleStyle, AudioFile } from '../../types';
-import { getVideoUrl } from '../../services/projectService';
+import { getVideoUrl, getFileUrl } from '../../services/projectService';
 import { srtTimeToSeconds, secondsToSrtTime } from '../../services/srtParser';
 import { BackArrowIcon, ChevronLeftIcon, ChevronRightIcon } from '../ui/Icons';
 import VideoPlayer from '../editor/VideoPlayer';
@@ -9,6 +9,7 @@ import StyleEditor from '../editor/StyleEditor';
 import Timeline from '../editor/Timeline';
 import EditorControls from '../editor/EditorControls';
 import { useHistoryState } from '../../hooks/useHistoryState';
+import { generateBatchTTS, listTTSVoices, TTSVoice } from '../../services/ttsService';
 import Tesseract from 'tesseract.js';
 
 
@@ -87,9 +88,13 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
 
   
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
+  const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
+  const [ttsVoices, setTtsVoices] = useState<TTSVoice[]>([]);
+  const [selectedTtsVoice, setSelectedTtsVoice] = useState<string>("BV421_vivn_streaming");
 
   const maxSubtitleEndTime = useMemo(() => {
     if (subtitles.length === 0) return 0;
@@ -561,6 +566,41 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   const handlePlay = useCallback(() => setIsPlaying(true), []);
   const handlePause = useCallback(() => setIsPlaying(false), []);
   
+  // Create and manage audio elements for TTS files
+  useEffect(() => {
+    const audioMap = audioElementsRef.current;
+    
+    // Remove audio elements for deleted files
+    const currentFileIds = new Set(audioFiles.map(f => f.id));
+    for (const [id, audio] of audioMap.entries()) {
+      if (!currentFileIds.has(id)) {
+        audio.pause();
+        audio.src = '';
+        audioMap.delete(id);
+      }
+    }
+    
+    // Create audio elements for new files
+    for (const audioFile of audioFiles) {
+      if (!audioMap.has(audioFile.id)) {
+        const audio = new Audio();
+        const audioUrl = getFileUrl(project.id, audioFile.id, audioFile.name);
+        audio.src = audioUrl;
+        audio.preload = 'auto';
+        audioMap.set(audioFile.id, audio);
+      }
+    }
+    
+    return () => {
+      // Cleanup on unmount
+      for (const audio of audioMap.values()) {
+        audio.pause();
+        audio.src = '';
+      }
+      audioMap.clear();
+    };
+  }, [audioFiles, project.id]);
+  
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -593,6 +633,41 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         if (currentPlaybackRate !== rateForCurrentPos) {
             setCurrentPlaybackRate(rateForCurrentPos);
         }
+        
+        // Handle audio playback for TTS files
+        if (timelineTime !== null) {
+            const audioMap = audioElementsRef.current;
+            for (const audioFile of audioFiles) {
+                const audio = audioMap.get(audioFile.id);
+                if (!audio) continue;
+                
+                const audioStart = audioFile.startTime;
+                const audioEnd = audioStart + (audioFile.duration || 0);
+                const isInRange = timelineTime >= audioStart && timelineTime < audioEnd;
+                
+                if (isInRange && !video.paused) {
+                    // Should be playing
+                    const audioTime = timelineTime - audioStart;
+                    if (audio.paused || Math.abs(audio.currentTime - audioTime) > 0.2) {
+                        audio.currentTime = audioTime;
+                        audio.play().catch(err => console.warn('Audio play failed:', err));
+                    }
+                } else {
+                    // Should not be playing
+                    if (!audio.paused) {
+                        audio.pause();
+                    }
+                }
+            }
+        } else {
+            // Outside any segment - pause all audio
+            const audioMap = audioElementsRef.current;
+            for (const audio of audioMap.values()) {
+                if (!audio.paused) {
+                    audio.pause();
+                }
+            }
+        }
 
         if (!video.paused && !video.seeking) {
             if (!currentSegment) {
@@ -614,7 +689,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     return () => {
         cancelAnimationFrame(animationFrameId);
     };
-  }, [segments, mapSourceToTimelineTime, isSeeking, currentPlaybackRate, timelineVisualDuration]);
+  }, [segments, mapSourceToTimelineTime, isSeeking, currentPlaybackRate, timelineVisualDuration, audioFiles, project.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -872,6 +947,79 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
         onUpdateProject(project.id, { subtitleStyle: newStyle });
     };
 
+    // Load TTS voices on mount
+    useEffect(() => {
+        listTTSVoices()
+            .then(voices => setTtsVoices(voices))
+            .catch(err => console.error('Failed to load TTS voices:', err));
+    }, []);
+
+    const handleGenerateTTS = async (subtitles: SubtitleBlock[]) => {
+        if (subtitles.length === 0) {
+            alert('Không có phụ đề để tạo TTS');
+            return;
+        }
+
+        // Filter out empty subtitles (using translated text)
+        const validSubtitles = subtitles.filter(sub => sub.text.trim().length > 0);
+        if (validSubtitles.length === 0) {
+            alert('Không có phụ đề bản dịch hợp lệ (tất cả đều trống)');
+            return;
+        }
+
+        setIsGeneratingTTS(true);
+        try {
+            const response = await generateBatchTTS(project.id, validSubtitles, selectedTtsVoice);
+            
+            if (response.errors.length > 0) {
+                console.warn('Some TTS generations failed:', response.errors);
+            }
+
+            if (response.generated.length === 0) {
+                alert('Không thể tạo TTS cho bất kỳ phụ đề nào. Vui lòng kiểm tra log và đảm bảo backend đang chạy.');
+                return;
+            }
+
+            // Create AudioFile objects for the generated TTS
+            const newAudioFiles: AudioFile[] = response.generated.map(item => ({
+                id: item.file_id,
+                name: item.filename,
+                type: 'audio',
+                startTime: item.start_time,
+                track: item.track,
+                storagePath: item.storage_path,
+                fileSize: item.file_size,
+                uploadedAt: item.created_at,
+                duration: item.duration,
+            }));
+
+            // Update editor state with new audio files
+            const updateFn = (prevState: EditorState) => ({
+                ...prevState,
+                audioFiles: [...prevState.audioFiles, ...newAudioFiles]
+            });
+            setLiveEditorState(updateFn);
+            setEditorState(updateFn);
+
+            // Also update project files
+            onUpdateProject(project.id, p => ({
+                files: [...p.files, ...newAudioFiles]
+            }));
+
+            alert(`Đã tạo thành công ${response.generated.length} track TTS từ bản dịch!${response.errors.length > 0 ? ` (${response.errors.length} lỗi)` : ''}`);
+        } catch (error) {
+            console.error('Failed to generate TTS:', error);
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+            if (errorMsg.includes('Failed to fetch') || errorMsg.includes('ERR_CONNECTION_REFUSED')) {
+                alert('Lỗi kết nối: Backend không chạy. Vui lòng khởi động backend (uvicorn) trước khi tạo TTS.');
+            } else {
+                alert(`Lỗi khi tạo TTS: ${errorMsg}`);
+            }
+        } finally {
+            setIsGeneratingTTS(false);
+        }
+    };
+
   return (
     <div ref={editorContainerRef} className="bg-gray-900 text-white h-screen flex flex-col overflow-hidden">
       <header className="bg-gray-800 p-2 flex items-center justify-between border-b border-gray-700 flex-shrink-0 z-20">
@@ -961,6 +1109,8 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], isAddi
                               activeSubtitleId={activeSubtitleId}
                               onSubtitleClick={(sub) => handleSeek(srtTimeToSeconds(sub.startTime))}
                               onUpdateSubtitle={handleUpdateSubtitle}
+                              onGenerateTTS={handleGenerateTTS}
+                              isGeneratingTTS={isGeneratingTTS}
                           />
                       )}
                       {activeRightTab === 'style' && (

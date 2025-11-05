@@ -16,12 +16,14 @@ from app.db import Database
 from app.asr_utils import SUPPORTED_EXTENSIONS, convert_directory_to_srt
 from app.ASR.ASRData import from_subtitle_file
 from app.ASR import transcribe
+from app.TTS import clines as tts_engine
+from app.TTS.constants import voices as tts_voices, sessionid as tts_sessionids
 
 APP_ROOT = Path(__file__).resolve().parent
 DB_PATH = APP_ROOT / "data" / "app.db"
-ASR_ROOT = APP_ROOT / "data" / "asr"
+DATA_ROOT = APP_ROOT / "data"
 
-ASR_ROOT.mkdir(parents=True, exist_ok=True)
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
 db = Database(DB_PATH)
 
@@ -177,7 +179,9 @@ def export_asr_to_srt(payload: AsrExportRequest) -> Dict[str, Any]:
     if source_dir is None:
         raise HTTPException(status_code=400, detail="source_dir is required")
 
-    output_dir = _resolve_path(payload.output_dir, default=ASR_ROOT) or ASR_ROOT
+    # Default to data/asr if no output_dir specified
+    default_asr = DATA_ROOT / "asr"
+    output_dir = _resolve_path(payload.output_dir, default=default_asr) or default_asr
 
     try:
         conversion = convert_directory_to_srt(
@@ -325,7 +329,8 @@ def generate_missing_project_srts(
         }
 
     request_payload = payload or ProjectAsrGenerationRequest()
-    default_source = ASR_ROOT / project_id
+    # Use data/{project_id}/asr folder
+    default_source = DATA_ROOT / project_id / "asr"
     source_dir = _resolve_path(request_payload.source_dir, default=default_source)
     if source_dir is None:
         source_dir = default_source
@@ -499,5 +504,315 @@ def generate_missing_project_srts(
         "skipped": skipped,
         "errors": errors,
     }
+
+
+# --- TTS (Text-to-Speech) ------------------------------------------------------
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = "BV421_vivn_streaming"  # Default Vietnamese voice
+    session_id: Optional[str] = None
+
+
+class TTSBatchRequest(BaseModel):
+    """Generate TTS for multiple subtitle blocks"""
+    subtitles: List[Dict[str, Any]]  # List of subtitle objects with id, text, startTime, endTime
+    voice: str = "BV421_vivn_streaming"
+    session_id: Optional[str] = None
+
+
+@app.get("/tts/voices")
+def list_tts_voices() -> List[Dict[str, str]]:
+    """List available TTS voices"""
+    return [{"name": name, "id": voice_id} for name, voice_id in tts_voices]
+
+
+@app.post("/tts/generate")
+def generate_tts(payload: TTSRequest) -> Dict[str, Any]:
+    """Generate TTS audio from text"""
+    session_id = payload.session_id or tts_sessionids[0]
+    
+    # Create temp file for TTS output
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+        temp_path = Path(tmp_file.name)
+    
+    try:
+        # Generate TTS
+        result = tts_engine.tts(
+            session_id=session_id,
+            text_speaker=payload.voice,
+            req_text=payload.text,
+            filename=str(temp_path),
+            play=False
+        )
+        
+        if result.get("status_code") != 0:
+            raise HTTPException(status_code=400, detail=f"TTS generation failed: {result.get('status')}")
+        
+        # Read the generated MP3
+        audio_data = temp_path.read_bytes()
+        
+        return {
+            "status": "success",
+            "duration": result.get("duration", 0),
+            "audio_data": audio_data.hex(),  # Return as hex string
+            "size": len(audio_data),
+        }
+    finally:
+        # Clean up temp file
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+@app.post("/projects/{project_id}/tts/batch")
+async def generate_batch_tts(project_id: str, payload: TTSBatchRequest) -> Dict[str, Any]:
+    """Generate TTS for multiple subtitles and save as audio files in the project"""
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    
+    session_id = payload.session_id or tts_sessionids[0]
+    generated_files: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    
+    # Get existing audio files to determine next track number
+    project_files = project.get("files") or []
+    existing_audio_files = [f for f in project_files if isinstance(f, dict) and f.get("type") == "audio"]
+    next_track = max([f.get("track", 0) for f in existing_audio_files], default=-1) + 1
+    
+    # Helper function to check if two time ranges overlap
+    def overlaps(start1: float, end1: float, start2: float, end2: float) -> bool:
+        return start1 < end2 and start2 < end1
+    
+    # Helper function to find available track for a new block
+    def find_available_track(new_start: float, new_duration: float, generated_so_far: List[Dict]) -> int:
+        new_end = new_start + new_duration
+        track = next_track
+        
+        while True:
+            # Check if this track is free for the time range
+            has_overlap = False
+            for existing in generated_so_far:
+                if existing["track"] == track:
+                    existing_end = existing["start_time"] + existing["duration"]
+                    if overlaps(new_start, new_end, existing["start_time"], existing_end):
+                        has_overlap = True
+                        break
+            
+            if not has_overlap:
+                return track
+            track += 1
+    
+    for idx, subtitle in enumerate(payload.subtitles):
+        try:
+            text = subtitle.get("text", "").strip()
+            if not text:
+                continue
+            
+            subtitle_id = subtitle.get("id")
+            start_time = subtitle.get("startTime", "00:00:00,000")
+            
+            # Generate unique file ID
+            file_id = f"tts-{project_id}-{subtitle_id}-{dt.datetime.utcnow().timestamp()}"
+            filename = f"tts_subtitle_{subtitle_id}.mp3"
+            
+            # Create temp file for TTS
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+                temp_path = Path(tmp_file.name)
+            
+            try:
+                # Generate TTS using synthesize_long_text for better handling of long text
+                result = tts_engine.synthesize_long_text(
+                    session_id=session_id,
+                    text_speaker=payload.voice,
+                    text=text,
+                    output_filename=str(temp_path),
+                    chunk_size=200,
+                    keep_chunks=False,
+                    play=False
+                )
+                
+                if result.get("status_code") != 0:
+                    errors.append({
+                        "subtitle_id": subtitle_id,
+                        "error": f"TTS failed: {result.get('status')}",
+                    })
+                    continue
+                
+                # Verify the file exists and is not empty
+                if not temp_path.exists():
+                    errors.append({
+                        "subtitle_id": subtitle_id,
+                        "error": "TTS file was not created",
+                    })
+                    continue
+                
+                # Read generated audio
+                audio_data = temp_path.read_bytes()
+                
+                if len(audio_data) == 0:
+                    errors.append({
+                        "subtitle_id": subtitle_id,
+                        "error": "TTS file is empty",
+                    })
+                    continue
+                
+                # Verify it's an MP3 file by checking magic bytes
+                # MP3 files start with ID3 (0x49 0x44 0x33) or 0xFF 0xFB/0xFF 0xF3/0xFF 0xF2
+                is_mp3 = (
+                    audio_data[:3] == b'ID3' or  # ID3 tag
+                    (len(audio_data) >= 2 and audio_data[0] == 0xFF and audio_data[1] in (0xFB, 0xF3, 0xF2))  # MP3 frame sync
+                )
+                
+                if not is_mp3:
+                    errors.append({
+                        "subtitle_id": subtitle_id,
+                        "error": f"Generated file is not a valid MP3 (magic bytes: {audio_data[:4].hex() if len(audio_data) >= 4 else 'empty'})",
+                    })
+                    continue
+                
+                # Save to database
+                created_at = dt.datetime.utcnow().isoformat()
+                storage_path, file_size = db.save_file(
+                    file_id=file_id,
+                    project_id=project_id,
+                    filename=filename,
+                    content_type="audio/mpeg",
+                    data=audio_data,
+                    created_at=created_at,
+                )
+                
+                # Convert start time to seconds
+                time_parts = start_time.replace(',', '.').split(':')
+                start_seconds = float(time_parts[0]) * 3600 + float(time_parts[1]) * 60 + float(time_parts[2])
+                
+                # Calculate duration
+                duration_seconds = result.get("duration", 0) / 1000.0  # Convert ms to seconds
+                
+                # Find available track (auto-move to lower track if overlap detected)
+                assigned_track = find_available_track(start_seconds, duration_seconds, generated_files)
+                
+                generated_files.append({
+                    "file_id": file_id,
+                    "filename": filename,
+                    "subtitle_id": subtitle_id,
+                    "text": text,
+                    "duration": duration_seconds,
+                    "track": assigned_track,  # Auto-assigned track (may be pushed down if overlap)
+                    "start_time": start_seconds,
+                    "storage_path": str(storage_path),
+                    "file_size": file_size,
+                    "created_at": created_at,
+                })
+            finally:
+                if temp_path.exists():
+                    temp_path.unlink()
+                    
+        except Exception as exc:
+            errors.append({
+                "subtitle_id": subtitle.get("id"),
+                "error": str(exc),
+            })
+    
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "generated": generated_files,
+        "errors": errors,
+        "voice": payload.voice,
+    }
+
+
+# --- Video Auto-Import ---------------------------------------------------------
+
+@app.get("/projects/{project_id}/videos/scan-folder")
+def scan_project_video_folder(project_id: str) -> Dict[str, Any]:
+    """Scan the project's Video folder for video files to import"""
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    
+    supported_extensions = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    found_videos: List[Dict[str, Any]] = []
+    
+    # Use data/{project_id}/Video folder
+    project_video_folder = DATA_ROOT / project_id / "Video"
+    project_video_folder.mkdir(parents=True, exist_ok=True)
+    
+    for video_file in project_video_folder.iterdir():
+        if video_file.is_file() and video_file.suffix.lower() in supported_extensions:
+            found_videos.append({
+                "filename": video_file.name,
+                "path": str(video_file),
+                "size": video_file.stat().st_size,
+            })
+    
+    return {
+        "status": "ok",
+        "videos": found_videos,
+        "folder": str(project_video_folder),
+        "count": len(found_videos),
+    }
+
+
+@app.post("/projects/{project_id}/videos/import-from-folder")
+async def import_videos_from_folder(project_id: str) -> Dict[str, Any]:
+    """Import all videos from the project's Video folder into the specified project"""
+    project = db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    
+    supported_extensions = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    imported_videos: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    
+    # Use data/{project_id}/Video folder
+    project_video_folder = DATA_ROOT / project_id / "Video"
+    project_video_folder.mkdir(parents=True, exist_ok=True)
+    
+    for video_file in project_video_folder.iterdir():
+        if not video_file.is_file() or video_file.suffix.lower() not in supported_extensions:
+            continue
+        
+        try:
+            # Generate unique file ID
+            file_id = f"video-{project_id}-{dt.datetime.utcnow().timestamp()}-{video_file.stem}"
+            
+            # Read video data
+            video_data = video_file.read_bytes()
+            
+            # Save to database
+            created_at = dt.datetime.utcnow().isoformat()
+            storage_path, file_size = db.save_file(
+                file_id=file_id,
+                project_id=project_id,
+                filename=video_file.name,
+                content_type="video/mp4" if video_file.suffix.lower() == ".mp4" else "video/*",
+                data=video_data,
+                created_at=created_at,
+            )
+            
+            imported_videos.append({
+                "file_id": file_id,
+                "filename": video_file.name,
+                "storage_path": str(storage_path),
+                "file_size": file_size,
+                "created_at": created_at,
+            })
+            
+        except Exception as exc:
+            errors.append({
+                "filename": video_file.name,
+                "error": str(exc),
+            })
+    
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "imported": imported_videos,
+        "errors": errors,
+        "count": len(imported_videos),
+    }
+
 
 __all__ = ["app"]

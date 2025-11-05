@@ -35,6 +35,20 @@ ensure_python_env() {
     python3 -m pip install -r "$ROOT_DIR/Backend/requirements.txt"
 }
 
+ensure_ffmpeg() {
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        log "ffmpeg not found. Installing via apt-get (this can take a minute)"
+        sudo apt-get update >/dev/null 2>&1 || apt-get update >/dev/null 2>&1
+        sudo apt-get install -y ffmpeg >/dev/null 2>&1 || apt-get install -y ffmpeg >/dev/null 2>&1
+    fi
+    
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        log "WARNING: ffmpeg installation failed. Audio extraction from video will not work."
+    else
+        log "ffmpeg is available: $(ffmpeg -version | head -n1)"
+    fi
+}
+
 ensure_node() {
     if ! command -v node >/dev/null 2>&1; then
         log "Node.js not found. Installing via apt-get (this can take a minute)"
@@ -169,6 +183,7 @@ print_summary() {
 }
 
 ensure_python_env
+ensure_ffmpeg
 ensure_node
 start_backend
 ensure_ngrok
