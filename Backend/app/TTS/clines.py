@@ -6,8 +6,10 @@ except Exception:
     _playsound = None
 try:
     from mutagen.mp3 import MP3
+    from mutagen import MutagenError
 except ImportError:
     MP3 = None
+    MutagenError = None
 from typing import List, Optional
 from .constants import voices
 
@@ -115,10 +117,15 @@ def synthesize_long_text(session_id: str,
         # Calculate duration of the final MP3 file
         duration_ms = 0
         if MP3 is not None and os.path.exists(output_filename):
+            # Build exception tuple dynamically
+            exceptions_to_catch = (OSError, AttributeError)
+            if MutagenError is not None:
+                exceptions_to_catch = (OSError, AttributeError, MutagenError)
+            
             try:
                 audio = MP3(output_filename)
                 duration_ms = int(audio.info.length * 1000)  # Convert seconds to milliseconds
-            except (OSError, AttributeError, TypeError) as e:
+            except exceptions_to_catch as e:
                 print(f"Warning: Could not read MP3 duration: {e}")
                 duration_ms = 0
 
