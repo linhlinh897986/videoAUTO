@@ -510,14 +510,14 @@ def generate_missing_project_srts(
 
 class TTSRequest(BaseModel):
     text: str
-    voice: str = "BV074_streaming"  # Default Vietnamese voice
+    voice: str = "BV074_streaming"  # Default TTS voice (Cô gái hoạt ngôn)
     session_id: Optional[str] = None
 
 
 class TTSBatchRequest(BaseModel):
     """Generate TTS for multiple subtitle blocks"""
     subtitles: List[Dict[str, Any]]  # List of subtitle objects with id, text, startTime, endTime
-    voice: str = "BV074_streaming"
+    voice: str = "BV074_streaming"  # Default TTS voice (Cô gái hoạt ngôn)
     session_id: Optional[str] = None
 
 
@@ -819,7 +819,6 @@ async def import_videos_from_folder(project_id: str) -> Dict[str, Any]:
 
 class VideoRenderRequest(BaseModel):
     """Request to render a video with all editing data"""
-    project_id: str
     video_file_id: str
     output_filename: Optional[str] = None
     include_audio: bool = True

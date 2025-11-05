@@ -9,7 +9,8 @@ import StyleEditor from '../editor/StyleEditor';
 import Timeline from '../editor/Timeline';
 import EditorControls from '../editor/EditorControls';
 import { useHistoryState } from '../../hooks/useHistoryState';
-import { generateBatchTTS, listTTSVoices, TTSVoice } from '../../services/ttsService';
+import { generateBatchTTS } from '../../services/ttsService';
+import { DEFAULT_TTS_VOICE } from '../../constants';
 import Tesseract from 'tesseract.js';
 
 
@@ -98,9 +99,8 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
 
   const [activeRightTab, setActiveRightTab] = useState<'subtitles' | 'style'>('subtitles');
   const [isGeneratingTTS, setIsGeneratingTTS] = useState(false);
-  const [ttsVoices, setTtsVoices] = useState<TTSVoice[]>([]);
-  // Use project's TTS voice if set, otherwise default to BV074_streaming
-  const selectedTtsVoice = project.ttsVoice || "BV074_streaming";
+  // Use project's TTS voice if set, otherwise use default
+  const selectedTtsVoice = project.ttsVoice || DEFAULT_TTS_VOICE;
   const [isRendering, setIsRendering] = useState(false);
 
   const maxSubtitleEndTime = useMemo(() => {
@@ -1085,13 +1085,6 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
         onUpdateProject(project.id, { subtitleStyle: newStyle });
     };
 
-    // Load TTS voices on mount
-    useEffect(() => {
-        listTTSVoices()
-            .then(voices => setTtsVoices(voices))
-            .catch(err => console.error('Failed to load TTS voices:', err));
-    }, []);
-
     const handleGenerateTTS = async (subtitles: SubtitleBlock[]) => {
         if (subtitles.length === 0) {
             alert('Không có phụ đề để tạo TTS');
@@ -1170,7 +1163,6 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    project_id: project.id,
                     video_file_id: videoFile.id,
                     include_audio: true,
                     include_subtitles: true,
