@@ -341,7 +341,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                                 current_rate /= 2.0
                             while current_rate < 0.5:
                                 tempo_filters.append("atempo=0.5")
-                                current_rate /= 0.5
+                                current_rate *= 2.0  # Multiply to increase rate back toward 0.5-2.0 range
                             if current_rate != 1.0:
                                 tempo_filters.append(f"atempo={current_rate}")
                             tempo_filter = "," + ",".join(tempo_filters) if tempo_filters else ""
