@@ -1110,8 +1110,25 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
         
         ffmpeg_cmd.extend(output_settings)
         
+        # Create log file path
+        log_file_path = output_path.parent / f"render_log_{dt.datetime.utcnow().timestamp()}.txt"
+        
         # Run ffmpeg
         try:
+            # Write command to log file
+            with open(log_file_path, 'w', encoding='utf-8') as log_file:
+                log_file.write("=" * 80 + "\n")
+                log_file.write("FFMPEG RENDER LOG\n")
+                log_file.write("=" * 80 + "\n\n")
+                log_file.write(f"Project ID: {project_id}\n")
+                log_file.write(f"Timestamp: {dt.datetime.utcnow().isoformat()}\n")
+                log_file.write(f"Output: {output_path}\n\n")
+                log_file.write("COMMAND:\n")
+                log_file.write(' '.join(ffmpeg_cmd) + "\n\n")
+                log_file.write("=" * 80 + "\n")
+                log_file.write("FFMPEG OUTPUT:\n")
+                log_file.write("=" * 80 + "\n\n")
+            
             result = subprocess.run(
                 ffmpeg_cmd,
                 stdout=subprocess.PIPE,
@@ -1120,10 +1137,22 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
                 check=False
             )
             
+            # Decode outputs
+            stdout = result.stdout.decode('utf-8', errors='ignore')
+            stderr = result.stderr.decode('utf-8', errors='ignore')
+            
+            # Append output to log file
+            with open(log_file_path, 'a', encoding='utf-8') as log_file:
+                log_file.write("STDOUT:\n")
+                log_file.write(stdout + "\n\n")
+                log_file.write("STDERR:\n")
+                log_file.write(stderr + "\n\n")
+                log_file.write("=" * 80 + "\n")
+                log_file.write(f"Return Code: {result.returncode}\n")
+                log_file.write("=" * 80 + "\n")
+            
             if result.returncode != 0:
-                stderr = result.stderr.decode('utf-8', errors='ignore')
                 # Show the last part of stderr which contains the actual error
-                # Also log the full stderr for debugging
                 stderr_lines = stderr.strip().split('\n')
                 # Get last 10 lines which usually contain the actual error
                 error_summary = '\n'.join(stderr_lines[-10:]) if len(stderr_lines) > 10 else stderr
@@ -1132,6 +1161,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
                     "status": "error",
                     "message": f"ffmpeg rendering failed:\n{error_summary}",
                     "ffmpeg_command": ' '.join(ffmpeg_cmd),  # Include command for debugging
+                    "log_file": str(log_file_path),  # Include log file path
                     "video_segments_count": len(payload.video_segments),
                     "audio_tracks_count": len(payload.audio_files),
                     "subtitles_count": len(payload.subtitles),
@@ -1158,6 +1188,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             return {
                 "status": "success",
                 "message": "Video rendered successfully!",
+                "log_file": str(log_file_path),  # Include log file path for success too
                 "output_filename": output_filename,
                 "output_path": str(output_path),
                 "file_size": file_size,
@@ -1168,9 +1199,19 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             }
             
         except subprocess.TimeoutExpired:
+            # Write timeout info to log
+            try:
+                with open(log_file_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write("\n" + "=" * 80 + "\n")
+                    log_file.write("TIMEOUT: Process exceeded 10 minutes\n")
+                    log_file.write("=" * 80 + "\n")
+            except Exception:
+                pass
+            
             return {
                 "status": "error",
                 "message": "Rendering timeout (>10 minutes). Video may be too long or complex.",
+                "log_file": str(log_file_path) if log_file_path.exists() else None,
                 "video_segments_count": len(payload.video_segments),
                 "audio_tracks_count": len(payload.audio_files),
                 "subtitles_count": len(payload.subtitles),
