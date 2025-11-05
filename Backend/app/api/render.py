@@ -30,6 +30,54 @@ class VideoRenderRequest(BaseModel):
 router = APIRouter()
 
 
+def _adjust_time_for_segments(
+    source_time_seconds: float, video_segments: Optional[List[Dict[str, Any]]]
+) -> float:
+    """
+    Adjust source time to output time based on video segment playback rate changes.
+    
+    Args:
+        source_time_seconds: Original time in seconds from source timeline
+        video_segments: List of video segments with timing and playback rate info
+    
+    Returns:
+        Adjusted time in seconds for the output timeline
+    """
+    if not video_segments or len(video_segments) == 0:
+        return source_time_seconds
+    
+    output_time = 0.0
+    time_accounted = False
+    
+    for segment in video_segments:
+        seg_start = segment.get("sourceStartTime", 0)
+        seg_end = segment.get("sourceEndTime", 0)
+        rate = segment.get("playbackRate", 1.0)
+        
+        if source_time_seconds < seg_start:
+            # Time is before this segment - shouldn't happen but handle it
+            break
+        elif source_time_seconds <= seg_end:
+            # Time is within this segment
+            offset_in_segment = source_time_seconds - seg_start
+            output_time += offset_in_segment / rate
+            time_accounted = True
+            break
+        else:
+            # Time is after this segment, accumulate segment duration
+            segment_duration = seg_end - seg_start
+            output_time += segment_duration / rate
+    
+    # If time is after all segments, add the remaining time at normal speed
+    if not time_accounted and video_segments:
+        last_segment = video_segments[-1]
+        last_seg_end = last_segment.get("sourceEndTime", 0)
+        if source_time_seconds > last_seg_end:
+            output_time += source_time_seconds - last_seg_end
+    
+    return output_time
+
+
 def _create_ass_subtitle_file(
     subtitles: List[Dict[str, Any]],
     style: Optional[Dict[str, Any]],
@@ -70,34 +118,6 @@ def _create_ass_subtitle_file(
         s = seconds % 60
         return f"{h}:{m:02d}:{s:05.2f}"
 
-    def adjust_time_for_segments(source_time_seconds: float) -> float:
-        """Adjust source time to output time based on video segments"""
-        if not video_segments or len(video_segments) == 0:
-            return source_time_seconds
-        
-        output_time = 0.0
-        for segment in video_segments:
-            seg_start = segment.get("sourceStartTime", 0)
-            seg_end = segment.get("sourceEndTime", 0)
-            rate = segment.get("playbackRate", 1.0)
-            
-            if source_time_seconds < seg_start:
-                # Time is before this segment
-                break
-            elif source_time_seconds <= seg_end:
-                # Time is within this segment
-                offset_in_segment = source_time_seconds - seg_start
-                output_time += offset_in_segment / rate
-                break
-            else:
-                # Time is after this segment, accumulate segment duration
-                segment_duration = seg_end - seg_start
-                output_time += segment_duration / rate
-        
-        return output_time
-
-    alignment = 2 if h_align == "center" else (1 if h_align == "left" else 3)
-
     ass_content = f"""[Script Info]
 Title: Rendered Subtitles
 ScriptType: v4.00+
@@ -123,8 +143,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         start_seconds = srt_time_to_seconds(start_time_str)
         end_seconds = srt_time_to_seconds(end_time_str)
         
-        adjusted_start = adjust_time_for_segments(start_seconds)
-        adjusted_end = adjust_time_for_segments(end_seconds)
+        adjusted_start = _adjust_time_for_segments(start_seconds, video_segments)
+        adjusted_end = _adjust_time_for_segments(end_seconds, video_segments)
         
         start = seconds_to_ass_time(adjusted_start)
         end = seconds_to_ass_time(adjusted_end)
@@ -133,44 +153,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n"
 
     output_path.write_text(ass_content, encoding="utf-8-sig")
-
-
-def _adjust_audio_start_time(
-    source_start_time: float, video_segments: Optional[List[Dict[str, Any]]]
-) -> float:
-    """
-    Adjust audio start time to account for video segment playback rate changes.
-    
-    Args:
-        source_start_time: Original start time in seconds
-        video_segments: List of video segments with timing and playback rate info
-    
-    Returns:
-        Adjusted start time in seconds for the output timeline
-    """
-    if not video_segments or len(video_segments) == 0:
-        return source_start_time
-    
-    output_time = 0.0
-    for segment in video_segments:
-        seg_start = segment.get("sourceStartTime", 0)
-        seg_end = segment.get("sourceEndTime", 0)
-        rate = segment.get("playbackRate", 1.0)
-        
-        if source_start_time < seg_start:
-            # Time is before this segment
-            break
-        elif source_start_time <= seg_end:
-            # Time is within this segment
-            offset_in_segment = source_start_time - seg_start
-            output_time += offset_in_segment / rate
-            break
-        else:
-            # Time is after this segment, accumulate segment duration
-            segment_duration = seg_end - seg_start
-            output_time += segment_duration / rate
-    
-    return output_time
 
 
 @router.post("/projects/{project_id}/render")
@@ -369,7 +351,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                 for idx, audio_info in enumerate(audio_paths):
                     original_start_time = audio_info.get("start_time", 0)
                     # Adjust audio start time based on video segment playback rates
-                    adjusted_start_time = _adjust_audio_start_time(
+                    adjusted_start_time = _adjust_time_for_segments(
                         original_start_time, payload.video_segments
                     )
                     start_time_ms = int(adjusted_start_time * 1000)
