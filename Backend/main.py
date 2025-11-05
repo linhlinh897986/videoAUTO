@@ -984,8 +984,9 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
         if frame_overlay_path:
             ffmpeg_cmd.extend(["-i", str(frame_overlay_path)])
         
-        # Build filter complex for video processing
-        filters = []
+        # Build filter complex for both video and audio processing
+        filter_complex_parts = []
+        video_filters = []
         
         # Apply hardsub cover box if specified
         if payload.hardsub_cover_box and payload.hardsub_cover_box.get("enabled"):
@@ -994,32 +995,72 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             y = int(box.get("y", 0) * 1080 / 100)
             w = int(box.get("width", 0) * 1920 / 100)
             h = int(box.get("height", 0) * 1080 / 100)
-            filters.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill")
+            video_filters.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill")
         
-        # Add frame overlay if exists
-        if frame_overlay_path:
-            overlay_input_idx = 1 + len(audio_paths)
-            if filters:
-                filters.append(f"[{overlay_input_idx}:v]overlay=0:0")
-            else:
-                filters.append(f"overlay={overlay_input_idx}:v")
+        # Note: frame overlay will be handled in filter_complex
         
-        # Add subtitles if exists
+        # Add subtitles if exists (must be last in video filter chain)
         if subtitle_file:
-            subtitle_filter = f"ass={str(subtitle_file).replace(':', '\\\\:').replace('\\\\', '/')}"
-            filters.append(subtitle_filter)
+            # Fix path for Windows/Linux compatibility - use forward slashes and escape special chars
+            subtitle_path_str = str(subtitle_file).replace('\\', '/').replace(':', r'\:')
+            video_filters.append(f"ass='{subtitle_path_str}'")
         
-        # Apply filters if any
-        if filters:
-            ffmpeg_cmd.extend(["-vf", ",".join(filters)])
+        # Combine video and audio processing
+        use_filter_complex = len(audio_paths) > 0 or frame_overlay_path  # Need filter_complex if mixing audio or overlaying
         
-        # Mix audio tracks if multiple exist
-        if len(audio_paths) > 0:
-            # Create audio mix filter
-            audio_inputs = "[0:a]"
-            for i in range(len(audio_paths)):
-                audio_inputs += f"[{i+1}:a]"
-            ffmpeg_cmd.extend(["-filter_complex", f"{audio_inputs}amix=inputs={len(audio_paths)+1}:duration=longest"])
+        if use_filter_complex:
+            # Use filter_complex for both video and audio
+            filter_parts = []
+            
+            # Video processing chain
+            if video_filters:
+                # Start with base video
+                video_stream = "[0:v]"
+                
+                # Apply drawbox and other basic filters first
+                basic_filters = [f for f in video_filters if not f.startswith('[') and 'overlay' not in f and 'ass' not in f]
+                if basic_filters:
+                    video_stream = f"{video_stream}{','.join(basic_filters)}"
+                
+                # Apply overlay if frame exists
+                if frame_overlay_path:
+                    overlay_input_idx = 1 + len(audio_paths)
+                    video_stream = f"{video_stream}[vtmp];[vtmp][{overlay_input_idx}:v]overlay=0:0"
+                
+                # Apply subtitles (must be last)
+                subtitle_filter = [f for f in video_filters if 'ass' in f]
+                if subtitle_filter:
+                    video_stream = f"{video_stream},{subtitle_filter[0]}"
+                
+                video_stream = f"{video_stream}[vout]"
+                filter_parts.append(video_stream)
+            
+            # Audio mixing
+            if len(audio_paths) > 0:
+                audio_inputs = "[0:a]"
+                for i in range(len(audio_paths)):
+                    audio_inputs += f"[{i+1}:a]"
+                audio_chain = f"{audio_inputs}amix=inputs={len(audio_paths)+1}:duration=longest[aout]"
+                filter_parts.append(audio_chain)
+            
+            # Apply filter_complex
+            ffmpeg_cmd.extend(["-filter_complex", ";".join(filter_parts)])
+            
+            # Map outputs
+            if video_filters:
+                ffmpeg_cmd.extend(["-map", "[vout]"])
+            else:
+                ffmpeg_cmd.extend(["-map", "0:v"])
+            
+            if len(audio_paths) > 0:
+                ffmpeg_cmd.extend(["-map", "[aout]"])
+            else:
+                ffmpeg_cmd.extend(["-map", "0:a"])
+        else:
+            # Use simple -vf if no audio mixing or overlay needed
+            if video_filters:
+                # Just basic filters like drawbox and ass
+                ffmpeg_cmd.extend(["-vf", ",".join(video_filters)])
         
         # Output settings
         ffmpeg_cmd.extend([
@@ -1043,9 +1084,16 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             
             if result.returncode != 0:
                 stderr = result.stderr.decode('utf-8', errors='ignore')
+                # Show the last part of stderr which contains the actual error
+                # Also log the full stderr for debugging
+                stderr_lines = stderr.strip().split('\n')
+                # Get last 10 lines which usually contain the actual error
+                error_summary = '\n'.join(stderr_lines[-10:]) if len(stderr_lines) > 10 else stderr
+                
                 return {
                     "status": "error",
-                    "message": f"ffmpeg rendering failed: {stderr[:500]}",
+                    "message": f"ffmpeg rendering failed:\n{error_summary}",
+                    "ffmpeg_command": ' '.join(ffmpeg_cmd),  # Include command for debugging
                     "video_segments_count": len(payload.video_segments),
                     "audio_tracks_count": len(payload.audio_files),
                     "subtitles_count": len(payload.subtitles),
