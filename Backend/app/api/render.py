@@ -204,6 +204,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                             "path": audio_path,
                             "start_time": audio_file.get("startTime", 0),
                             "track": audio_file.get("track", i),
+                            "volume_db": audio_file.get("volumeDb", 0),
                         }
                     )
 
@@ -368,14 +369,24 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                 delayed_labels: List[str] = []
                 for idx, audio_info in enumerate(audio_paths):
                     original_start_time = audio_info.get("start_time", 0)
+                    volume_db = audio_info.get("volume_db", 0)
+                    
                     # Adjust audio start time based on video segment playback rates
                     adjusted_start_time = _adjust_time_for_segments(
                         original_start_time, payload.video_segments
                     )
                     start_time_ms = int(adjusted_start_time * 1000)
-                    delay_filters.append(
-                        f"[{idx + 1}:a]adelay={start_time_ms}|{start_time_ms}[a{idx + 1}]"
-                    )
+                    
+                    # Apply individual volume adjustment if specified
+                    if volume_db != 0:
+                        linear_gain = math.pow(10.0, volume_db / 20.0)
+                        delay_filters.append(
+                            f"[{idx + 1}:a]volume={linear_gain:.6f},adelay={start_time_ms}|{start_time_ms}[a{idx + 1}]"
+                        )
+                    else:
+                        delay_filters.append(
+                            f"[{idx + 1}:a]adelay={start_time_ms}|{start_time_ms}[a{idx + 1}]"
+                        )
                     delayed_labels.append(f"[a{idx + 1}]")
 
                 mix_inputs = base_audio_stream + "".join(delayed_labels)
