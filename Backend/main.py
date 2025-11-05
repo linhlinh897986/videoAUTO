@@ -996,12 +996,19 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
             w = int(box.get("width", 0) * 1920 / 100)
             h = int(box.get("height", 0) * 1080 / 100)
             # Use boxblur to create a frosted/blurred overlay effect in the specified region
-            # boxblur with enable expression to only blur the specified region
+            # Note: enable expression must not have quotes around it in the filter string
+            enable_expr = f"between(y\\,{y}\\,{y+h})*between(x\\,{x}\\,{x+w})"
             video_filters.append(
-                f"boxblur=enable='between(y,{y},{y+h})*between(x,{x},{x+w})':luma_radius=20:luma_power=3"
+                f"boxblur=luma_radius=20:luma_power=3:enable='{enable_expr}'"
             )
         
         # Note: frame overlay will be handled in filter_complex
+        
+        # Add scale and fps filters (must come before subtitles)
+        # Force 1080p resolution and 30fps
+        video_filters.append("scale=1920:1080:force_original_aspect_ratio=decrease")
+        video_filters.append("pad=1920:1080:(ow-iw)/2:(oh-ih)/2")
+        video_filters.append("fps=30")
         
         # Add subtitles if exists (must be last in video filter chain)
         if subtitle_file:
@@ -1066,15 +1073,42 @@ async def render_video(project_id: str, payload: VideoRenderRequest) -> Dict[str
                 # Just basic filters like drawbox and ass
                 ffmpeg_cmd.extend(["-vf", ",".join(video_filters)])
         
-        # Output settings
-        ffmpeg_cmd.extend([
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            str(output_path)
-        ])
+        # Check for GPU encoder availability (NVENC for NVIDIA GPUs)
+        gpu_encoder = None
+        try:
+            # Check if h264_nvenc is available
+            probe_result = subprocess.run(
+                [ffmpeg_path, "-hide_banner", "-encoders"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            encoders_output = probe_result.stdout.decode('utf-8', errors='ignore')
+            if 'h264_nvenc' in encoders_output:
+                gpu_encoder = "h264_nvenc"
+        except Exception:
+            pass  # Fall back to CPU encoding
+        
+        # Output settings with GPU priority
+        output_settings = []
+        
+        # Video codec - prioritize GPU encoding
+        if gpu_encoder:
+            output_settings.extend(["-c:v", gpu_encoder])
+            output_settings.extend(["-preset", "p4"])  # NVENC preset (p1-p7, p4 is balanced)
+            output_settings.extend(["-cq", "23"])  # NVENC quality (similar to CRF)
+        else:
+            output_settings.extend(["-c:v", "libx264"])
+            output_settings.extend(["-preset", "medium"])
+            output_settings.extend(["-crf", "23"])
+        
+        # Audio codec
+        output_settings.extend(["-c:a", "aac", "-b:a", "192k"])
+        
+        # Output file
+        output_settings.append(str(output_path))
+        
+        ffmpeg_cmd.extend(output_settings)
         
         # Run ffmpeg
         try:
