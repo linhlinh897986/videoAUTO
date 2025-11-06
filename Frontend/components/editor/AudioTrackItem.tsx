@@ -11,14 +11,19 @@ interface AudioTrackItemProps {
     getInteractionHandlers: (type: 'audio', id: string) => InteractionHandlers;
     isSelected: boolean;
     onSelect: (id: string, e: React.MouseEvent) => void;
+    adjustTimeForSegments: (sourceTime: number) => number;
 }
 
-const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, timelineVisualDuration, getInteractionHandlers, isSelected, onSelect }) => {
+const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, timelineVisualDuration, getInteractionHandlers, isSelected, onSelect, adjustTimeForSegments }) => {
     const { duration = 0, startTime = 0, name } = audioFile;
     if (duration <= 0 || timelineVisualDuration <= 0) return null;
     
-    const left = (startTime / timelineVisualDuration) * 100;
-    const width = (duration / timelineVisualDuration) * 100;
+    // Adjust start time based on video segment playback rates
+    const adjustedStartTime = adjustTimeForSegments(startTime);
+    const adjustedEndTime = adjustTimeForSegments(startTime + duration);
+    
+    const left = (adjustedStartTime / timelineVisualDuration) * 100;
+    const width = ((adjustedEndTime - adjustedStartTime) / timelineVisualDuration) * 100;
 
     return (
         <div
