@@ -11,15 +11,17 @@ interface AudioTrackItemProps {
     getInteractionHandlers: (type: 'audio', id: string) => InteractionHandlers;
     isSelected: boolean;
     onSelect: (id: string, e: React.MouseEvent) => void;
+    adjustTimeForSegments: (sourceTime: number) => number;
 }
 
-const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, timelineVisualDuration, getInteractionHandlers, isSelected, onSelect }) => {
+const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, timelineVisualDuration, getInteractionHandlers, isSelected, onSelect, adjustTimeForSegments }) => {
     const { duration = 0, startTime = 0, name } = audioFile;
     if (duration <= 0 || timelineVisualDuration <= 0) return null;
     
-    // Audio startTime is already in timeline coordinates, no adjustment needed
-    // (unlike subtitles which have source video timestamps)
-    const left = (startTime / timelineVisualDuration) * 100;
+    // Adjust audio position the same way as subtitles
+    const adjustedStartTime = adjustTimeForSegments(startTime);
+    
+    const left = (adjustedStartTime / timelineVisualDuration) * 100;
     const width = (duration / timelineVisualDuration) * 100;  // Keep original duration
 
     return (

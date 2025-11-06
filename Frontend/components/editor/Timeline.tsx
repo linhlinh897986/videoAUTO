@@ -345,6 +345,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                                     getInteractionHandlers={getInteractionHandlers}
                                     isSelected={selectedAudioIds.includes(audioFile.id)}
                                     onSelect={onSelectAudio}
+                                    adjustTimeForSegments={adjustTimeForSegments}
                                 />
                             </div>
                         ))}
