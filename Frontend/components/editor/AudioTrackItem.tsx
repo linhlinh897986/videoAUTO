@@ -18,12 +18,11 @@ const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, ti
     const { duration = 0, startTime = 0, name } = audioFile;
     if (duration <= 0 || timelineVisualDuration <= 0) return null;
     
-    // Adjust start time based on video segment playback rates
+    // Audio blocks: adjust only the start position, keep original duration
     const adjustedStartTime = adjustTimeForSegments(startTime);
-    const adjustedEndTime = adjustTimeForSegments(startTime + duration);
     
     const left = (adjustedStartTime / timelineVisualDuration) * 100;
-    const width = ((adjustedEndTime - adjustedStartTime) / timelineVisualDuration) * 100;
+    const width = (duration / timelineVisualDuration) * 100;  // Keep original duration
 
     return (
         <div
