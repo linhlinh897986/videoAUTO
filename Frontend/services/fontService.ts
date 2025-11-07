@@ -31,9 +31,6 @@ export async function getAvailableFonts(): Promise<string[]> {
     try {
         const response = await fetch(`${API_BASE_URL}/fonts`, {
             method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-            },
         });
 
         if (!response.ok) {

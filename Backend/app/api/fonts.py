@@ -47,7 +47,7 @@ def get_available_fonts() -> List[str]:
         
         return fonts
     
-    except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         # If fc-list is not available or fails, return a default list
         # This ensures the API doesn't break on systems without fontconfig
         # Arial is listed first as it's the default font preference
