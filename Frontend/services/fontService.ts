@@ -58,16 +58,45 @@ const COMMON_FONTS = [
     'Verdana',
 ];
 
+// Type definition for the experimental Font Access API
+interface FontData {
+    family: string;
+    fullName: string;
+    postscriptName: string;
+    style: string;
+}
+
+interface WindowWithFonts extends Window {
+    queryLocalFonts?: () => Promise<FontData[]>;
+}
+
+declare global {
+    interface Navigator {
+        permissions: {
+            query(permissionDesc: { name: string }): Promise<PermissionStatus>;
+        };
+    }
+}
+
 /**
  * Check if a font is available in the browser
+ * Uses a reusable canvas for performance
  */
+const fontTestCanvas = (() => {
+    if (typeof document !== 'undefined') {
+        return document.createElement('canvas');
+    }
+    return null;
+})();
+
 function isFontAvailable(fontName: string): boolean {
-    // Create a canvas to test font rendering
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
+    if (!fontTestCanvas) return false;
+    
+    const context = fontTestCanvas.getContext('2d');
     if (!context) return false;
 
     // Set a baseline font
+    // Using a string with varied character widths (m, i, l) to detect font differences reliably
     const testString = 'mmmmmmmmmmlli';
     const fontSize = 72;
     const baselineFont = 'monospace';
@@ -91,11 +120,11 @@ export async function getAvailableFonts(): Promise<string[]> {
     // Try to use the modern Font Access API if available
     if ('queryLocalFonts' in window) {
         try {
-            const permission = await (navigator as any).permissions.query({ name: 'local-fonts' });
+            const permission = await navigator.permissions.query({ name: 'local-fonts' } as any);
             if (permission.state === 'granted' || permission.state === 'prompt') {
-                const fonts = await (window as any).queryLocalFonts();
+                const fonts = await (window as WindowWithFonts).queryLocalFonts!();
                 const fontNames = Array.from(
-                    new Set(fonts.map((font: any) => font.family))
+                    new Set(fonts.map((font: FontData) => font.family))
                 ).sort() as string[];
                 return fontNames;
             }
