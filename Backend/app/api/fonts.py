@@ -14,6 +14,7 @@ def get_available_fonts() -> List[str]:
     """
     Get list of fonts available on the server for subtitle rendering.
     Uses fontconfig's fc-list command to enumerate system fonts.
+    Arial is prioritized as the default font if available.
     """
     try:
         # Run fc-list to get all available fonts
@@ -36,19 +37,31 @@ def get_available_fonts() -> List[str]:
                 if family:
                     font_families.add(family)
         
-        # Sort and return as list
-        return sorted(font_families)
+        # Convert to sorted list
+        fonts = sorted(font_families)
+        
+        # Prioritize Arial as the default font if it exists
+        if 'Arial' in fonts:
+            fonts.remove('Arial')
+            fonts.insert(0, 'Arial')
+        
+        return fonts
     
     except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         # If fc-list is not available or fails, return a default list
         # This ensures the API doesn't break on systems without fontconfig
+        # Arial is listed first as it's the default font preference
         return [
             'Arial',
-            'Courier New',
-            'Georgia',
+            'DejaVu Sans',
+            'Liberation Sans',
             'Helvetica',
-            'Impact',
-            'Times New Roman',
-            'Trebuchet MS',
             'Verdana',
+            'Courier New',
+            'DejaVu Serif',
+            'Liberation Serif',
+            'Times New Roman',
+            'Georgia',
+            'Impact',
+            'Trebuchet MS',
         ]

@@ -43,7 +43,8 @@ export async function getAvailableFonts(): Promise<string[]> {
         const fonts = await response.json();
         
         if (Array.isArray(fonts) && fonts.length > 0) {
-            return fonts;
+            // Prioritize Arial as the default font by putting it first
+            return prioritizeDefaultFont(fonts, 'Arial');
         }
         
         // Fallback if response is invalid
@@ -52,6 +53,25 @@ export async function getAvailableFonts(): Promise<string[]> {
         console.warn('Failed to fetch fonts from backend, using fallback list:', error);
         return DEFAULT_FONTS;
     }
+}
+
+/**
+ * Prioritize a specific font to be first in the list
+ * @param fonts - List of font names
+ * @param preferredFont - Font to prioritize (e.g., 'Arial')
+ * @returns Sorted font list with preferred font first if available
+ */
+function prioritizeDefaultFont(fonts: string[], preferredFont: string): string[] {
+    const hasPreferredFont = fonts.some(f => f === preferredFont);
+    
+    if (hasPreferredFont) {
+        // Remove preferred font from list and add it to the beginning
+        const otherFonts = fonts.filter(f => f !== preferredFont).sort();
+        return [preferredFont, ...otherFonts];
+    }
+    
+    // If preferred font not available, just return sorted list
+    return fonts.sort();
 }
 
 /**
