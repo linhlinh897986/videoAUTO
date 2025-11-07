@@ -11,9 +11,10 @@ interface TrackProps {
     getInteractionHandlers: (type: 'subtitle' | 'resize-start' | 'resize-end', id: number) => InteractionHandlers;
     selectedSubtitleIds: number[];
     onSelectSubtitle: (id: number, e: React.MouseEvent) => void;
+    adjustTimeForSegments: (sourceTime: number) => number;
 }
 
-const Track: React.FC<TrackProps> = ({ trackIndex, duration, subtitles, getInteractionHandlers, selectedSubtitleIds, onSelectSubtitle }) => {
+const Track: React.FC<TrackProps> = ({ trackIndex, duration, subtitles, getInteractionHandlers, selectedSubtitleIds, onSelectSubtitle, adjustTimeForSegments }) => {
     return (
         <div 
             className="absolute w-full"
@@ -31,6 +32,7 @@ const Track: React.FC<TrackProps> = ({ trackIndex, duration, subtitles, getInter
                     isSelected={selectedSubtitleIds.includes(sub.id)}
                     getInteractionHandlers={getInteractionHandlers}
                     onSelect={onSelectSubtitle}
+                    adjustTimeForSegments={adjustTimeForSegments}
                 />
             ))}
         </div>

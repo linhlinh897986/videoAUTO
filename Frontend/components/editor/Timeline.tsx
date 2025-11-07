@@ -66,6 +66,43 @@ const Timeline: React.FC<TimelineProps> = (props) => {
     const contentWrapperRef = useRef<HTMLDivElement>(null);
     const headerWrapperRef = useRef<HTMLDivElement>(null);
     
+    // Helper function to convert source time to visual time considering playback rates
+    const adjustTimeForSegments = useMemo(() => {
+        return (sourceTime: number): number => {
+            if (!videoFile.segments || videoFile.segments.length === 0) {
+                return sourceTime;
+            }
+            
+            let visualTime = 0;
+            
+            for (const segment of videoFile.segments) {
+                const rate = segment.playbackRate || 1;
+                const segmentSourceDuration = segment.sourceEndTime - segment.sourceStartTime;
+                const segmentVisualDuration = segmentSourceDuration / rate;
+                
+                if (sourceTime < segment.sourceStartTime) {
+                    // Source time is before this segment
+                    break;
+                } else if (sourceTime <= segment.sourceEndTime) {
+                    // Source time is within this segment
+                    const offsetInSegment = sourceTime - segment.sourceStartTime;
+                    visualTime += offsetInSegment / rate;
+                    break;
+                } else {
+                    // Source time is after this segment, accumulate full segment duration
+                    visualTime += segmentVisualDuration;
+                }
+            }
+            
+            // If source time is after all segments, add remaining time at normal speed
+            const lastSegment = videoFile.segments[videoFile.segments.length - 1];
+            if (sourceTime > lastSegment.sourceEndTime) {
+                visualTime += sourceTime - lastSegment.sourceEndTime;
+            }
+            
+            return visualTime;
+        };
+    }, [videoFile.segments]);
 
     const numAudioTracks = useMemo(() => {
         if (audioFiles.length === 0) return 1;
@@ -80,7 +117,8 @@ const Timeline: React.FC<TimelineProps> = (props) => {
     } = useTimelineInteraction({ 
         ...props, 
         timelineRef: contentWrapperRef,
-        containerRef: timelineContainerRef 
+        containerRef: timelineContainerRef,
+        adjustTimeForSegments
     });
 
     const numSubtitleTracks = useMemo(() => {
@@ -308,6 +346,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                                     getInteractionHandlers={getInteractionHandlers}
                                     isSelected={selectedAudioIds.includes(audioFile.id)}
                                     onSelect={onSelectAudio}
+                                    adjustTimeForSegments={adjustTimeForSegments}
                                 />
                             </div>
                         ))}
@@ -323,6 +362,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                                 getInteractionHandlers={getInteractionHandlers}
                                 selectedSubtitleIds={selectedSubtitleIds}
                                 onSelectSubtitle={onSelectSubtitle}
+                                adjustTimeForSegments={adjustTimeForSegments}
                             />
                         ))}
                     </div>

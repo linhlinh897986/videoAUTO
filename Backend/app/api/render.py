@@ -53,6 +53,22 @@ def _create_ass_subtitle_file(
 
     alignment = 2 if h_align == "center" else (1 if h_align == "left" else 3)
 
+    def srt_time_to_seconds(srt_time: str) -> float:
+        """Convert SRT time format to seconds"""
+        time_part = srt_time.replace(",", ".")
+        parts = time_part.split(":")
+        if len(parts) == 3:
+            h, m, s = parts
+            return float(h) * 3600 + float(m) * 60 + float(s)
+        return 0.0
+
+    def seconds_to_ass_time(seconds: float) -> str:
+        """Convert seconds to ASS time format"""
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = seconds % 60
+        return f"{h}:{m:02d}:{s:05.2f}"
+
     ass_content = f"""[Script Info]
 Title: Rendered Subtitles
 ScriptType: v4.00+
@@ -70,21 +86,18 @@ Style: Default,{font_family},{font_size},{primary_ass},&H000000FF,{outline_ass},
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-    def srt_to_ass_time(srt_time: str) -> str:
-        time_part = srt_time.replace(",", ".")
-        parts = time_part.split(":")
-        if len(parts) == 3:
-            h, m, s = parts
-            s_parts = s.split(".")
-            if len(s_parts) == 2:
-                s, ms = s_parts
-                cs = ms[:2]
-                return f"{int(h)}:{m}:{s}.{cs}"
-        return srt_time
-
     for sub in subtitles:
-        start = srt_to_ass_time(sub.get("startTime", "00:00:00,000"))
-        end = srt_to_ass_time(sub.get("endTime", "00:00:00,000"))
+        start_time_str = sub.get("startTime", "00:00:00,000")
+        end_time_str = sub.get("endTime", "00:00:00,000")
+        
+        # Convert SRT time format to ASS format
+        # Frontend already adjusted times based on playback rates
+        start_seconds = srt_time_to_seconds(start_time_str)
+        end_seconds = srt_time_to_seconds(end_time_str)
+        
+        start = seconds_to_ass_time(start_seconds)
+        end = seconds_to_ass_time(end_seconds)
+        
         text = sub.get("text", "").replace("\n", "\\N")
         ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n"
 
@@ -122,7 +135,9 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
         subtitle_file = None
         if payload.subtitles and len(payload.subtitles) > 0:
             subtitle_file = temp_path / "subtitles.ass"
-            _create_ass_subtitle_file(payload.subtitles, payload.subtitle_style, subtitle_file)
+            _create_ass_subtitle_file(
+                payload.subtitles, payload.subtitle_style, subtitle_file
+            )
 
         audio_paths = []
         for i, audio_file in enumerate(payload.audio_files):
@@ -138,6 +153,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                             "path": audio_path,
                             "start_time": audio_file.get("startTime", 0),
                             "track": audio_file.get("track", i),
+                            "volume_db": audio_file.get("volumeDb", 0),
                         }
                     )
 
@@ -260,17 +276,35 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                         end = segment.get("sourceEndTime", 0)
                         rate = segment.get("playbackRate", 1.0)
 
-                        if 0.5 <= rate <= 2.0:
-                            tempo_filter = f"atempo={rate}"
+                        # FFmpeg atempo filter only supports 0.5-2.0 range
+                        # For extreme rates, chain multiple atempo filters
+                        if rate == 1.0:
+                            tempo_filter = ""
+                        elif 0.5 <= rate <= 2.0:
+                            tempo_filter = f",atempo={rate}"
                         else:
-                            tempo_filter = "atempo=1.0"
+                            # Chain atempo filters for extreme rates
+                            tempo_filters = []
+                            current_rate = rate
+                            # For fast rates (>2.0), apply multiple 2.0x filters
+                            while current_rate > 2.0:
+                                tempo_filters.append("atempo=2.0")
+                                current_rate /= 2.0
+                            # For slow rates (<0.5), apply multiple 0.5x filters
+                            while current_rate < 0.5:
+                                tempo_filters.append("atempo=0.5")
+                                current_rate *= 2.0  # Each 0.5x filter doubles the effective rate
+                            # Apply remaining rate if not exactly 1.0
+                            if current_rate != 1.0:
+                                tempo_filters.append(f"atempo={current_rate}")
+                            tempo_filter = "," + ",".join(tempo_filters) if tempo_filters else ""
 
-                    audio_trim = (
-                        f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS"
-                    )
-                    audio_segment_filters.append(
-                        f"{audio_trim},{tempo_filter}[seg{i}a]"
-                    )
+                        audio_trim = (
+                            f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS"
+                        )
+                        audio_segment_filters.append(
+                            f"{audio_trim}{tempo_filter}[seg{i}a]"
+                        )
 
                     if audio_segment_filters:
                         filter_parts.append(";".join(audio_segment_filters))
@@ -283,10 +317,22 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                 delay_filters: List[str] = []
                 delayed_labels: List[str] = []
                 for idx, audio_info in enumerate(audio_paths):
-                    start_time_ms = int(audio_info.get("start_time", 0) * 1000)
-                    delay_filters.append(
-                        f"[{idx + 1}:a]adelay={start_time_ms}|{start_time_ms}[a{idx + 1}]"
-                    )
+                    start_time = audio_info.get("start_time", 0)
+                    volume_db = audio_info.get("volume_db", 0)
+                    
+                    # Frontend already adjusted start time based on playback rates
+                    start_time_ms = int(start_time * 1000)
+                    
+                    # Apply individual volume adjustment if specified
+                    if volume_db != 0:
+                        linear_gain = math.pow(10.0, volume_db / 20.0)
+                        delay_filters.append(
+                            f"[{idx + 1}:a]volume={linear_gain:.6f},adelay={start_time_ms}|{start_time_ms}[a{idx + 1}]"
+                        )
+                    else:
+                        delay_filters.append(
+                            f"[{idx + 1}:a]adelay={start_time_ms}|{start_time_ms}[a{idx + 1}]"
+                        )
                     delayed_labels.append(f"[a{idx + 1}]")
 
                 mix_inputs = base_audio_stream + "".join(delayed_labels)

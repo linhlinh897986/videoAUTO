@@ -9,11 +9,17 @@ interface TimelineItemProps {
     getInteractionHandlers: (type: 'subtitle' | 'resize-start' | 'resize-end', id: number) => InteractionHandlers;
     isSelected: boolean;
     onSelect: (id: number, e: React.MouseEvent) => void;
+    adjustTimeForSegments: (sourceTime: number) => number;
 }
 
-const TimelineItem: React.FC<TimelineItemProps> = ({ subtitle, duration, getInteractionHandlers, isSelected, onSelect }) => {
-    const start = srtTimeToSeconds(subtitle.startTime);
-    const end = srtTimeToSeconds(subtitle.endTime);
+const TimelineItem: React.FC<TimelineItemProps> = ({ subtitle, duration, getInteractionHandlers, isSelected, onSelect, adjustTimeForSegments }) => {
+    const startSource = srtTimeToSeconds(subtitle.startTime);
+    const endSource = srtTimeToSeconds(subtitle.endTime);
+    
+    // Adjust times based on video segment playback rates
+    const start = adjustTimeForSegments(startSource);
+    const end = adjustTimeForSegments(endSource);
+    
     const left = (start / duration) * 100;
     const width = ((end - start) / duration) * 100;
 
