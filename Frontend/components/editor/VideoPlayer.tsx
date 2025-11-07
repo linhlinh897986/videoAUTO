@@ -104,7 +104,7 @@ const drawSubtitles = (
     const fontSize = Math.max(10, (style.fontSize || 48) * scaleFactor);
     const outlineWidth = (style.outlineWidth || 2.5) * scaleFactor;
 
-    ctx.font = `bold ${fontSize}px "${style.fontFamily || 'Arial'}"`;
+    ctx.font = `${fontSize}px "${style.fontFamily || 'Arial'}"`;
     ctx.lineJoin = 'round';
     ctx.lineWidth = outlineWidth * 2; // lineWidth is centered, so double for full stroke
     ctx.strokeStyle = style.outlineColor || '#000000';
