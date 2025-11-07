@@ -257,17 +257,19 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
             };
         });
 
+        // Update audio file positions on timeline (duration stays fixed, only position shifts)
         const newAudioFiles = prevState.audioFiles.map(audio => {
             const audioStart = audio.startTime || 0;
-            const audioDuration = audio.duration || 0;
-            const audioEnd = audioStart + audioDuration;
 
             let newStartTime;
             if (audioStart <= timelineStartOfChangedSegment) {
+                // Audio starts before changed segment - no change
                 newStartTime = audioStart;
             } else if (audioStart >= timelineEndOfChangedSegment_OLD) {
+                // Audio starts after changed segment - shift by time difference
                 newStartTime = audioStart - timeShift;
             } else {
+                // Audio starts within changed segment - scale proportionally
                 const offset = audioStart - timelineStartOfChangedSegment;
                 newStartTime = timelineStartOfChangedSegment + (offset * durationRatio);
             }
