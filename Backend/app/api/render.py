@@ -36,12 +36,17 @@ def _create_ass_subtitle_file(
     output_path: Path,
 ) -> None:
     font_family = style.get("fontFamily", "Arial") if style else "Arial"
-    font_size = style.get("fontSize", 24) if style else 24
+    font_size = style.get("fontSize", 48) if style else 48  # Match frontend default
     primary_color = style.get("primaryColor", "#FFFFFF") if style else "#FFFFFF"
     outline_color = style.get("outlineColor", "#000000") if style else "#000000"
-    outline_width = style.get("outlineWidth", 2) if style else 2
-    vertical_margin = style.get("verticalMargin", 10) if style else 10
+    outline_width = style.get("outlineWidth", 2.5) if style else 2.5  # Match frontend default
+    vertical_margin_percent = style.get("verticalMargin", 8) if style else 8  # Match frontend default (percentage)
     h_align = style.get("horizontalAlign", "center") if style else "center"
+    
+    # Convert vertical margin from percentage to pixels for 1080p reference
+    # Frontend: y = height * (1 - verticalMargin / 100)
+    # For 1080p: margin from bottom = 1080 * (verticalMargin / 100)
+    vertical_margin = int(1080 * vertical_margin_percent / 100)
 
     def hex_to_ass(hex_color: str) -> str:
         hex_color = hex_color.lstrip("#")
