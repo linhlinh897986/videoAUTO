@@ -15,6 +15,12 @@ from pydantic import BaseModel
 from app.core import DATA_ROOT, db
 
 
+# ASS format reference resolution for subtitle rendering
+# All subtitle dimensions are specified relative to this resolution
+REFERENCE_HEIGHT = 1080
+REFERENCE_WIDTH = 1920
+
+
 class VideoRenderRequest(BaseModel):
     video_file_id: str
     video_segments: List[Dict[str, Any]]
@@ -43,10 +49,10 @@ def _create_ass_subtitle_file(
     vertical_margin_percent = style.get("verticalMargin", 8) if style else 8  # Match frontend default (percentage)
     h_align = style.get("horizontalAlign", "center") if style else "center"
     
-    # Convert vertical margin from percentage to pixels for 1080p reference
+    # Convert vertical margin from percentage to pixels for reference resolution
     # Frontend: y = height * (1 - verticalMargin / 100)
-    # For 1080p: margin from bottom = 1080 * (verticalMargin / 100)
-    vertical_margin = int(1080 * vertical_margin_percent / 100)
+    # For reference height: margin from bottom = REFERENCE_HEIGHT * (verticalMargin / 100)
+    vertical_margin = int(REFERENCE_HEIGHT * vertical_margin_percent / 100)
 
     def hex_to_ass(hex_color: str) -> str:
         hex_color = hex_color.lstrip("#")
@@ -79,8 +85,8 @@ Title: Rendered Subtitles
 ScriptType: v4.00+
 WrapStyle: 0
 ScaledBorderAndShadow: yes
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {REFERENCE_WIDTH}
+PlayResY: {REFERENCE_HEIGHT}
 YCbCr Matrix: TV.709
 
 [V4+ Styles]
