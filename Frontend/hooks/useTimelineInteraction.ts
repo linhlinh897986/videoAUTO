@@ -142,6 +142,8 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
             const thresholdInSeconds = SNAP_PX_THRESHOLD * (timelineVisualDuration / contentWidth);
             
             const snapPoints: number[] = [currentTime];
+            
+            // Subtitles: stored with source video times, need conversion to visual timeline
             subtitles.forEach(sub => {
                 if (sub.id !== interaction.itemId) {
                     // Convert source time to visual time for snap points
@@ -151,10 +153,12 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                     snapPoints.push(visualEnd);
                 }
             });
+            
+            // Audio files: startTime already in visual/timeline coordinates (adjusted by Timeline component)
+            // Audio blocks are positioned at adjusted times by AudioTrackItem, so their startTime
+            // is already the visual position on the timeline, not the source time
              audioFiles.forEach(audio => {
                 if (audio.id !== interaction.itemId) {
-                    // Audio startTime is already in visual/timeline coordinates, adjusted by frontend
-                    // So use it directly
                     snapPoints.push(audio.startTime || 0);
                     snapPoints.push((audio.startTime || 0) + (audio.duration || 0));
                 }
