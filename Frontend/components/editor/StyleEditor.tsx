@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Project, SubtitleStyle, BoundingBox, VideoFile } from '../../types';
 import { SparklesIcon, LoadingSpinner, TrashIcon } from '../ui/Icons';
+import { getCachedAvailableFonts, DEFAULT_FONTS } from '../../services/fontService';
 
 
 interface StyleEditorProps {
@@ -12,11 +13,6 @@ interface StyleEditorProps {
     analysisProgress: { progress: number; status: string };
     onUpdateHardsubBox: (box: BoundingBox) => void;
 }
-
-const FONT_FAMILIES = [
-    'Arial', 'Helvetica', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Impact',
-    'Times New Roman', 'Georgia', 'Courier New', 'Lucida Console'
-];
 
 const StyleEditor: React.FC<StyleEditorProps> = ({ 
     project, videoFile, onUpdateProject, 
@@ -35,7 +31,24 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
     };
 
     const [style, setStyle] = useState<SubtitleStyle>(project.subtitleStyle || defaultStyle);
+    const [availableFonts, setAvailableFonts] = useState<string[]>(DEFAULT_FONTS);
+    const [isLoadingFonts, setIsLoadingFonts] = useState(true);
     const hardsubCoverBox = videoFile.hardsubCoverBox;
+
+    useEffect(() => {
+        const loadFonts = async () => {
+            try {
+                const fonts = await getCachedAvailableFonts();
+                setAvailableFonts(fonts);
+            } catch (error) {
+                console.error('Failed to load fonts:', error);
+                setAvailableFonts(DEFAULT_FONTS);
+            } finally {
+                setIsLoadingFonts(false);
+            }
+        };
+        loadFonts();
+    }, []);
 
     useEffect(() => {
         if (JSON.stringify(project.subtitleStyle) !== JSON.stringify(style)) {
@@ -152,13 +165,20 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
 
                 {/* Font Family */}
                 <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-1">Phông chữ</label>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">
+                        Phông chữ {isLoadingFonts && <span className="text-xs text-gray-500">(Đang tải...)</span>}
+                    </label>
                     <select
                         value={style.fontFamily}
                         onChange={e => handleStyleChange('fontFamily', e.target.value)}
                         className="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                        style={{ fontFamily: style.fontFamily }}
                     >
-                        {FONT_FAMILIES.map(font => <option key={font} value={font}>{font}</option>)}
+                        {availableFonts.map(font => (
+                            <option key={font} value={font} style={{ fontFamily: font }}>
+                                {font}
+                            </option>
+                        ))}
                     </select>
                 </div>
 
