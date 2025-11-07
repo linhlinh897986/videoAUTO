@@ -338,7 +338,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                             />
                         ))}
                         {audioFiles.map((audioFile) => (
-                            <div key={audioFile.id} className="absolute w-full" style={{ top: `${(audioFile.track ?? 0) * TRACK_HEIGHT}px`, height: TRACK_HEIGHT }}>
+                            <div key={audioFile.id} className="absolute w-full pointer-events-none" style={{ top: `${(audioFile.track ?? 0) * TRACK_HEIGHT}px`, height: TRACK_HEIGHT }}>
                                 <AudioTrackItem
                                     audioFile={audioFile}
                                     audioUrl={audioUrls.get(audioFile.id) || null}
