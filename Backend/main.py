@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import api_keys, asr, custom_styles, files, health, projects, render, tts, videos
+from app.api import api_keys, asr, custom_styles, files, fonts, health, projects, render, tts, videos
 
 app = FastAPI(title="VideoAUTO Storage API")
 
@@ -21,6 +21,7 @@ ROUTERS = [
     api_keys.router,
     custom_styles.router,
     files.router,
+    fonts.router,
     asr.router,
     tts.router,
     videos.router,
