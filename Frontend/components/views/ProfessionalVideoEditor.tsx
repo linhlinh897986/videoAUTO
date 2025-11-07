@@ -257,9 +257,31 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
             };
         });
 
+        const newAudioFiles = prevState.audioFiles.map(audio => {
+            const audioStart = audio.startTime || 0;
+            const audioDuration = audio.duration || 0;
+            const audioEnd = audioStart + audioDuration;
+
+            let newStartTime;
+            if (audioStart <= timelineStartOfChangedSegment) {
+                newStartTime = audioStart;
+            } else if (audioStart >= timelineEndOfChangedSegment_OLD) {
+                newStartTime = audioStart - timeShift;
+            } else {
+                const offset = audioStart - timelineStartOfChangedSegment;
+                newStartTime = timelineStartOfChangedSegment + (offset * durationRatio);
+            }
+
+            return {
+                ...audio,
+                startTime: Math.max(0, newStartTime),
+            };
+        });
+
         return {
             ...prevState,
             subtitles: newSubtitles,
+            audioFiles: newAudioFiles,
             segments: newSegments,
         };
     };
