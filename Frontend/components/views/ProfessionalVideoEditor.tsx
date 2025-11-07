@@ -391,32 +391,39 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
 
   const activeSubtitles = useMemo(() => {
     return subtitles.filter(s => {
-      const start = srtTimeToSeconds(s.startTime);
-      const end = srtTimeToSeconds(s.endTime);
-      return currentTime >= start && currentTime < end;
+      // Convert subtitle source time to visual timeline time for comparison
+      const visualStart = mapSourceToTimelineTime(srtTimeToSeconds(s.startTime)).timelineTime;
+      const visualEnd = mapSourceToTimelineTime(srtTimeToSeconds(s.endTime)).timelineTime;
+      if (visualStart === null || visualEnd === null) return false;
+      return currentTime >= visualStart && currentTime < visualEnd;
     });
-  }, [currentTime, subtitles]);
+  }, [currentTime, subtitles, mapSourceToTimelineTime]);
 
   const activeSubtitleId = useMemo(() => activeSubtitles[0]?.id, [activeSubtitles]);
   const activeSubtitlesText = useMemo(() => activeSubtitles.map(s => s.text).join('\n'), [activeSubtitles]);
   
   const handleSplitSubtitle = () => {
       const subToSplit = subtitles.find(sub => {
-          const start = srtTimeToSeconds(sub.startTime);
-          const end = srtTimeToSeconds(sub.endTime);
-          return currentTime > start && currentTime < end;
+          // Convert subtitle source time to visual timeline time for comparison
+          const visualStart = mapSourceToTimelineTime(srtTimeToSeconds(sub.startTime)).timelineTime;
+          const visualEnd = mapSourceToTimelineTime(srtTimeToSeconds(sub.endTime)).timelineTime;
+          if (visualStart === null || visualEnd === null) return false;
+          return currentTime > visualStart && currentTime < visualEnd;
       });
 
       if (!subToSplit) return;
 
+      // Convert current visual time to source time for storage
+      const splitSourceTime = mapTimelineToSourceTime(currentTime);
+
       const newSubA: SubtitleBlock = {
           ...subToSplit,
-          endTime: secondsToSrtTime(currentTime),
+          endTime: secondsToSrtTime(splitSourceTime),
       };
       const newSubB: SubtitleBlock = {
           ...subToSplit,
           id: Date.now(), // Simple unique ID generation
-          startTime: secondsToSrtTime(currentTime),
+          startTime: secondsToSrtTime(splitSourceTime),
       };
       
       const updateFn = (prevState: EditorState) => {
