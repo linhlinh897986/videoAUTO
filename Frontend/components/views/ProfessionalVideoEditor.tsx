@@ -391,32 +391,39 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
 
   const activeSubtitles = useMemo(() => {
     return subtitles.filter(s => {
-      const start = srtTimeToSeconds(s.startTime);
-      const end = srtTimeToSeconds(s.endTime);
-      return currentTime >= start && currentTime < end;
+      // Convert subtitle source time to visual timeline time for comparison
+      const visualStart = mapSourceToTimelineTime(srtTimeToSeconds(s.startTime)).timelineTime;
+      const visualEnd = mapSourceToTimelineTime(srtTimeToSeconds(s.endTime)).timelineTime;
+      if (visualStart === null || visualEnd === null) return false;
+      return currentTime >= visualStart && currentTime < visualEnd;
     });
-  }, [currentTime, subtitles]);
+  }, [currentTime, subtitles, mapSourceToTimelineTime]);
 
   const activeSubtitleId = useMemo(() => activeSubtitles[0]?.id, [activeSubtitles]);
   const activeSubtitlesText = useMemo(() => activeSubtitles.map(s => s.text).join('\n'), [activeSubtitles]);
   
   const handleSplitSubtitle = () => {
       const subToSplit = subtitles.find(sub => {
-          const start = srtTimeToSeconds(sub.startTime);
-          const end = srtTimeToSeconds(sub.endTime);
-          return currentTime > start && currentTime < end;
+          // Convert subtitle source time to visual timeline time for comparison
+          const visualStart = mapSourceToTimelineTime(srtTimeToSeconds(sub.startTime)).timelineTime;
+          const visualEnd = mapSourceToTimelineTime(srtTimeToSeconds(sub.endTime)).timelineTime;
+          if (visualStart === null || visualEnd === null) return false;
+          return currentTime > visualStart && currentTime < visualEnd;
       });
 
       if (!subToSplit) return;
 
+      // Convert current visual time to source time for storage
+      const splitSourceTime = mapTimelineToSourceTime(currentTime);
+
       const newSubA: SubtitleBlock = {
           ...subToSplit,
-          endTime: secondsToSrtTime(currentTime),
+          endTime: secondsToSrtTime(splitSourceTime),
       };
       const newSubB: SubtitleBlock = {
           ...subToSplit,
           id: Date.now(), // Simple unique ID generation
-          startTime: secondsToSrtTime(currentTime),
+          startTime: secondsToSrtTime(splitSourceTime),
       };
       
       const updateFn = (prevState: EditorState) => {
@@ -712,13 +719,19 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
                 const audio = audioMap.get(audioFile.id);
                 if (!audio) continue;
                 
-                const audioStart = audioFile.startTime || 0;
-                const audioEnd = audioStart + (audioFile.duration || 0);
-                const isInRange = timelineTime >= audioStart && timelineTime < audioEnd;
+                // Convert audio source time to visual timeline time for comparison
+                const audioSourceStart = audioFile.startTime || 0;
+                const { timelineTime: audioVisualStart } = mapSourceToTimelineTime(audioSourceStart);
+                
+                // If audio start is in a gap (not in any segment), skip it
+                if (audioVisualStart === null) continue;
+                
+                const audioVisualEnd = audioVisualStart + (audioFile.duration || 0);
+                const isInRange = timelineTime >= audioVisualStart && timelineTime < audioVisualEnd;
                 
                 if (isInRange && !video.paused) {
                     // Should be playing
-                    const audioTime = timelineTime - audioStart;
+                    const audioTime = timelineTime - audioVisualStart;
                     const timeDiff = Math.abs(audio.currentTime - audioTime);
                     
                     // Only sync if significantly out of sync (>0.3s) or if not playing

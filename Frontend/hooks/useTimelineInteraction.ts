@@ -117,13 +117,19 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
         
         if (!sub && !audio) return;
         
+        // Convert source times to visual times for interaction state
+        const initialStartSource = sub ? srtTimeToSeconds(sub.startTime) : (audio?.startTime || 0);
+        const initialEndSource = sub ? srtTimeToSeconds(sub.endTime) : (audio?.startTime || 0) + (audio?.duration || 0);
+        const initialStartVisual = adjustTimeForSegments(initialStartSource);
+        const initialEndVisual = sub ? adjustTimeForSegments(initialEndSource) : initialStartVisual + (audio?.duration || 0);
+        
         setInteraction({
             type,
             itemId,
             initialMouseX: e.clientX,
             initialMouseY: e.clientY,
-            initialStartTime: sub ? srtTimeToSeconds(sub.startTime) : (audio?.startTime || 0),
-            initialEndTime: sub ? srtTimeToSeconds(sub.endTime) : (audio?.startTime || 0) + (audio?.duration || 0),
+            initialStartTime: initialStartVisual,
+            initialEndTime: initialEndVisual,
             initialTrack: sub ? sub.track ?? 0 : (audio?.track ?? 0),
         });
     }, [containerRef, onTimelineInteractionStart, subtitles, audioFiles, onSelectSubtitle]);
@@ -261,18 +267,22 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         const hasCollision = prevState.subtitles.some(other => {
                             if (other.id === interaction.itemId) return false;
                             if ((other.track ?? 0) !== newTrack) return false;
-                            const otherStart = srtTimeToSeconds(other.startTime);
-                            const otherEnd = srtTimeToSeconds(other.endTime);
+                            const otherStart = adjustTimeForSegments(srtTimeToSeconds(other.startTime));
+                            const otherEnd = adjustTimeForSegments(srtTimeToSeconds(other.endTime));
                             return newStart < otherEnd - 0.001 && newEnd > otherStart + 0.001;
                         });
 
                         if (hasCollision) return prevState;
                         
+                        // Convert visual times back to source times for storage
+                        const newStartSource = visualToSourceTime(newStart);
+                        const newEndSource = visualToSourceTime(newEnd);
+                        
                         return {
                             ...prevState,
                             subtitles: prevState.subtitles.map(s => 
                                 s.id === interaction.itemId 
-                                ? { ...s, track: newTrack, startTime: secondsToSrtTime(newStart), endTime: secondsToSrtTime(newEnd) } 
+                                ? { ...s, track: newTrack, startTime: secondsToSrtTime(newStartSource), endTime: secondsToSrtTime(newEndSource) } 
                                 : s
                             )
                         };
@@ -287,9 +297,8 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         const newTrack = Math.max(0, Math.floor(relativeY / TRACK_HEIGHT));
 
                         const duration = audioToUpdate.duration || 0;
-                        // initialStartTime is source time, convert to visual for positioning
-                        const initialVisualStart = adjustTimeForSegments(interaction.initialStartTime);
-                        let newVisualStart = initialVisualStart + dtTimeline;
+                        // initialStartTime is now already in visual time
+                        let newVisualStart = interaction.initialStartTime + dtTimeline;
                         
                         const { time: snappedStartTime, point: startSnapPoint } = snap(newVisualStart);
                         const { time: snappedEndTime, point: endSnapPoint } = snap(newVisualStart + duration);
@@ -341,9 +350,9 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         
                         const currentTrack = subToUpdate.track ?? 0;
                         const prevSub = prevState.subtitles
-                            .filter(other => other.id !== subToUpdate.id && (other.track ?? 0) === currentTrack && srtTimeToSeconds(other.endTime) <= interaction.initialStartTime)
+                            .filter(other => other.id !== subToUpdate.id && (other.track ?? 0) === currentTrack && adjustTimeForSegments(srtTimeToSeconds(other.endTime)) <= interaction.initialStartTime)
                             .sort((a, b) => srtTimeToSeconds(b.endTime) - srtTimeToSeconds(a.endTime))[0];
-                        const leftBoundary = prevSub ? srtTimeToSeconds(prevSub.endTime) : 0;
+                        const leftBoundary = prevSub ? adjustTimeForSegments(srtTimeToSeconds(prevSub.endTime)) : 0;
                         
                         let newStart = interaction.initialStartTime + dtTimeline;
                         newStart = Math.max(leftBoundary, newStart);
@@ -352,10 +361,13 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         const { time: snappedTime, point } = snap(newStart);
                         newStart = snappedTime;
                         setSnapLinePosition(point);
+                        
+                        // Convert visual time back to source time for storage
+                        const newStartSource = visualToSourceTime(newStart);
 
                         return {
                            ...prevState,
-                           subtitles: prevState.subtitles.map(s => s.id === interaction.itemId ? {...s, startTime: secondsToSrtTime(newStart)} : s)
+                           subtitles: prevState.subtitles.map(s => s.id === interaction.itemId ? {...s, startTime: secondsToSrtTime(newStartSource)} : s)
                         };
                     }
                     case 'resize-end': {
@@ -364,9 +376,9 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
 
                         const currentTrack = subToUpdate.track ?? 0;
                         const nextSub = prevState.subtitles
-                            .filter(other => other.id !== subToUpdate.id && (other.track ?? 0) === currentTrack && srtTimeToSeconds(other.startTime) >= interaction.initialEndTime)
+                            .filter(other => other.id !== subToUpdate.id && (other.track ?? 0) === currentTrack && adjustTimeForSegments(srtTimeToSeconds(other.startTime)) >= interaction.initialEndTime)
                             .sort((a, b) => srtTimeToSeconds(a.startTime) - srtTimeToSeconds(b.startTime))[0];
-                        const rightBoundary = nextSub ? srtTimeToSeconds(nextSub.startTime) : timelineVisualDuration;
+                        const rightBoundary = nextSub ? adjustTimeForSegments(srtTimeToSeconds(nextSub.startTime)) : timelineVisualDuration;
 
                         let newEnd = interaction.initialEndTime + dtTimeline;
                         newEnd = Math.min(rightBoundary, newEnd);
@@ -375,10 +387,13 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         const { time: snappedTime, point } = snap(newEnd);
                         newEnd = snappedTime;
                         setSnapLinePosition(point);
+                        
+                        // Convert visual time back to source time for storage
+                        const newEndSource = visualToSourceTime(newEnd);
 
                         return {
                            ...prevState,
-                           subtitles: prevState.subtitles.map(s => s.id === interaction.itemId ? {...s, endTime: secondsToSrtTime(newEnd)} : s)
+                           subtitles: prevState.subtitles.map(s => s.id === interaction.itemId ? {...s, endTime: secondsToSrtTime(newEndSource)} : s)
                         };
                     }
                     default:
@@ -425,7 +440,8 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         // Check audio files
                         const audioTracksBaseY = RULER_HEIGHT + VIDEO_TRACK_HEIGHT + WAVEFORM_TRACK_HEIGHT;
                         audioFiles.forEach(audio => {
-                            const audioStartSec = audio.startTime || 0;
+                            // Convert audio source time to visual timeline time
+                            const audioStartSec = adjustTimeForSegments(audio.startTime || 0);
                             const audioEndSec = audioStartSec + (audio.duration || 0);
                             const track = audio.track ?? 0;
                             
@@ -442,8 +458,9 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         const numAudioTracks = audioFiles.length > 0 ? Math.max(...audioFiles.map(a => a.track ?? 0)) + 1 : 0;
                         const subtitlesBaseY = audioTracksBaseY + (numAudioTracks * TRACK_HEIGHT);
                         subtitles.forEach(sub => {
-                            const subStartSec = srtTimeToSeconds(sub.startTime);
-                            const subEndSec = srtTimeToSeconds(sub.endTime);
+                            // Convert subtitle source time to visual timeline time
+                            const subStartSec = adjustTimeForSegments(srtTimeToSeconds(sub.startTime));
+                            const subEndSec = adjustTimeForSegments(srtTimeToSeconds(sub.endTime));
                             const track = sub.track ?? 0;
                             
                             const subTopPx = subtitlesBaseY + (track * TRACK_HEIGHT);
