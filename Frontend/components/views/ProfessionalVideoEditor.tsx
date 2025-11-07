@@ -712,13 +712,19 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
                 const audio = audioMap.get(audioFile.id);
                 if (!audio) continue;
                 
-                const audioStart = audioFile.startTime || 0;
-                const audioEnd = audioStart + (audioFile.duration || 0);
-                const isInRange = timelineTime >= audioStart && timelineTime < audioEnd;
+                // Convert audio source time to visual timeline time for comparison
+                const audioSourceStart = audioFile.startTime || 0;
+                const { timelineTime: audioVisualStart } = mapSourceToTimelineTime(audioSourceStart);
+                
+                // If audio start is in a gap (not in any segment), skip it
+                if (audioVisualStart === null) continue;
+                
+                const audioVisualEnd = audioVisualStart + (audioFile.duration || 0);
+                const isInRange = timelineTime >= audioVisualStart && timelineTime < audioVisualEnd;
                 
                 if (isInRange && !video.paused) {
                     // Should be playing
-                    const audioTime = timelineTime - audioStart;
+                    const audioTime = timelineTime - audioVisualStart;
                     const timeDiff = Math.abs(audio.currentTime - audioTime);
                     
                     // Only sync if significantly out of sync (>0.3s) or if not playing

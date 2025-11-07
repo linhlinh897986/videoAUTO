@@ -425,7 +425,8 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         // Check audio files
                         const audioTracksBaseY = RULER_HEIGHT + VIDEO_TRACK_HEIGHT + WAVEFORM_TRACK_HEIGHT;
                         audioFiles.forEach(audio => {
-                            const audioStartSec = audio.startTime || 0;
+                            // Convert audio source time to visual timeline time
+                            const audioStartSec = adjustTimeForSegments(audio.startTime || 0);
                             const audioEndSec = audioStartSec + (audio.duration || 0);
                             const track = audio.track ?? 0;
                             
@@ -442,8 +443,9 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         const numAudioTracks = audioFiles.length > 0 ? Math.max(...audioFiles.map(a => a.track ?? 0)) + 1 : 0;
                         const subtitlesBaseY = audioTracksBaseY + (numAudioTracks * TRACK_HEIGHT);
                         subtitles.forEach(sub => {
-                            const subStartSec = srtTimeToSeconds(sub.startTime);
-                            const subEndSec = srtTimeToSeconds(sub.endTime);
+                            // Convert subtitle source time to visual timeline time
+                            const subStartSec = adjustTimeForSegments(srtTimeToSeconds(sub.startTime));
+                            const subEndSec = adjustTimeForSegments(srtTimeToSeconds(sub.endTime));
                             const track = sub.track ?? 0;
                             
                             const subTopPx = subtitlesBaseY + (track * TRACK_HEIGHT);
