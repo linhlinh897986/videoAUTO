@@ -26,7 +26,7 @@ const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, ti
 
     return (
         <div
-            className={`audio-track-item absolute h-10 rounded border-2 flex items-center p-1 cursor-grab active:cursor-grabbing transition-colors ${
+            className={`audio-track-item absolute h-10 rounded border-2 flex items-center p-1 cursor-grab active:cursor-grabbing transition-colors pointer-events-auto ${
                 isSelected 
                     ? 'bg-purple-700/90 border-purple-400 shadow-lg shadow-purple-500/20' 
                     : 'bg-purple-900/80 border-purple-700 hover:border-purple-500'

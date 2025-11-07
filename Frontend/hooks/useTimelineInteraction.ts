@@ -132,7 +132,7 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
             initialEndTime: initialEndVisual,
             initialTrack: sub ? sub.track ?? 0 : (audio?.track ?? 0),
         });
-    }, [containerRef, onTimelineInteractionStart, subtitles, audioFiles, onSelectSubtitle]);
+    }, [containerRef, onTimelineInteractionStart, subtitles, audioFiles, onSelectSubtitle, adjustTimeForSegments]);
     
     useEffect(() => {
         if (!interaction) {
@@ -494,7 +494,7 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [interaction, subtitles, audioFiles, timelineVisualDuration, pixelsToTimelineSeconds, onSeek, onTimelineUpdate, onSeeking, timelineRef, containerRef, onSelectSubtitle, onTimelineInteractionEnd, currentTime, videoFile, onMarqueeSelect, marqueeRect]);
+    }, [interaction, subtitles, audioFiles, timelineVisualDuration, pixelsToTimelineSeconds, onSeek, onTimelineUpdate, onSeeking, timelineRef, containerRef, onSelectSubtitle, onTimelineInteractionEnd, currentTime, videoFile, onMarqueeSelect, marqueeRect, adjustTimeForSegments, visualToSourceTime]);
 
     const getInteractionHandlers = useCallback((
       type: 'subtitle' | 'resize-start' | 'resize-end' | 'playhead' | 'timeline' | 'ruler' | 'audio',
