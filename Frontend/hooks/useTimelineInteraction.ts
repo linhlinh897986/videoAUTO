@@ -59,6 +59,33 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
         return Math.max(0, time);
     }, [timelineVisualDuration, timelineRef, containerRef]);
 
+    // Convert visual time back to source time (reverse of adjustTimeForSegments)
+    const visualToSourceTime = useCallback((visualTime: number): number => {
+        if (!videoFile.segments || videoFile.segments.length === 0) {
+            return visualTime;
+        }
+        
+        let accumulatedVisualTime = 0;
+        
+        for (const segment of videoFile.segments) {
+            const rate = segment.playbackRate || 1;
+            const segmentSourceDuration = segment.sourceEndTime - segment.sourceStartTime;
+            const segmentVisualDuration = segmentSourceDuration / rate;
+            
+            if (visualTime <= accumulatedVisualTime + segmentVisualDuration) {
+                // Visual time is within this segment
+                const offsetInSegmentVisual = visualTime - accumulatedVisualTime;
+                const offsetInSegmentSource = offsetInSegmentVisual * rate;
+                return segment.sourceStartTime + offsetInSegmentSource;
+            }
+            
+            accumulatedVisualTime += segmentVisualDuration;
+        }
+        
+        // If visual time is after all segments, assume normal speed
+        const lastSegment = videoFile.segments[videoFile.segments.length - 1];
+        return lastSegment.sourceEndTime + (visualTime - accumulatedVisualTime);
+    }, [videoFile.segments]);
 
     const handleMouseDown = useCallback((type: InteractionType, e: React.MouseEvent, itemId?: number | string) => {
         e.preventDefault();
@@ -154,13 +181,13 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                 }
             });
             
-            // Audio files: startTime already in visual/timeline coordinates (adjusted by Timeline component)
-            // Audio blocks are positioned at adjusted times by AudioTrackItem, so their startTime
-            // is already the visual position on the timeline, not the source time
-             audioFiles.forEach(audio => {
+            // Audio files: startTime is source time, needs adjustment to visual time (like subtitles)
+            audioFiles.forEach(audio => {
                 if (audio.id !== interaction.itemId) {
-                    snapPoints.push(audio.startTime || 0);
-                    snapPoints.push((audio.startTime || 0) + (audio.duration || 0));
+                    const visualStart = adjustTimeForSegments(audio.startTime || 0);
+                    const visualEnd = visualStart + (audio.duration || 0);
+                    snapPoints.push(visualStart);
+                    snapPoints.push(visualEnd);
                 }
             });
 
@@ -260,45 +287,51 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
                         const newTrack = Math.max(0, Math.floor(relativeY / TRACK_HEIGHT));
 
                         const duration = audioToUpdate.duration || 0;
-                        let newStart = interaction.initialStartTime + dtTimeline;
+                        // initialStartTime is source time, convert to visual for positioning
+                        const initialVisualStart = adjustTimeForSegments(interaction.initialStartTime);
+                        let newVisualStart = initialVisualStart + dtTimeline;
                         
-                        const { time: snappedStartTime, point: startSnapPoint } = snap(newStart);
-                        const { time: snappedEndTime, point: endSnapPoint } = snap(newStart + duration);
+                        const { time: snappedStartTime, point: startSnapPoint } = snap(newVisualStart);
+                        const { time: snappedEndTime, point: endSnapPoint } = snap(newVisualStart + duration);
 
                         if (startSnapPoint !== null) {
-                            newStart = snappedStartTime;
+                            newVisualStart = snappedStartTime;
                             snapPos = startSnapPoint;
                         } else if (endSnapPoint !== null) {
-                            newStart = snappedEndTime - duration;
+                            newVisualStart = snappedEndTime - duration;
                             snapPos = endSnapPoint;
                         }
                         setSnapLinePosition(snapPos);
 
-                        let newEnd = newStart + duration;
+                        let newVisualEnd = newVisualStart + duration;
 
-                        if (newStart < 0) {
-                            newStart = 0;
-                            newEnd = duration;
+                        if (newVisualStart < 0) {
+                            newVisualStart = 0;
+                            newVisualEnd = duration;
                         }
-                        if (newEnd > timelineVisualDuration) {
-                            newEnd = timelineVisualDuration;
-                            newStart = newEnd - duration;
+                        if (newVisualEnd > timelineVisualDuration) {
+                            newVisualEnd = timelineVisualDuration;
+                            newVisualStart = newVisualEnd - duration;
                         }
 
+                        // Check collision in visual time
                         const hasCollision = prevState.audioFiles.some(other => {
                             if (other.id === interaction.itemId) return false;
                             if ((other.track ?? 0) !== newTrack) return false;
-                            const otherStart = other.startTime || 0;
-                            const otherEnd = otherStart + (other.duration || 0);
-                            return newStart < otherEnd - 0.001 && newEnd > otherStart + 0.001;
+                            const otherVisualStart = adjustTimeForSegments(other.startTime || 0);
+                            const otherVisualEnd = otherVisualStart + (other.duration || 0);
+                            return newVisualStart < otherVisualEnd - 0.001 && newVisualEnd > otherVisualStart + 0.001;
                         });
 
                         if (hasCollision) return prevState;
 
+                        // Convert visual time back to source time for storage
+                        const newSourceStart = visualToSourceTime(newVisualStart);
+
                         return {
                             ...prevState,
                             audioFiles: prevState.audioFiles.map(a =>
-                                a.id === interaction.itemId ? { ...a, startTime: newStart, track: newTrack } : a
+                                a.id === interaction.itemId ? { ...a, startTime: newSourceStart, track: newTrack } : a
                             )
                         };
                     }
