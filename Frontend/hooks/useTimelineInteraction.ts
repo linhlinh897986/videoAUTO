@@ -33,6 +33,7 @@ interface TimelineInteractionProps {
     onMarqueeSelect: (segmentIds: string[], subtitleIds: number[], audioIds: string[], isAdditive: boolean) => void;
     timelineRef: RefObject<HTMLDivElement>;
     containerRef: RefObject<HTMLDivElement>; // Ref for the scrolling container
+    adjustTimeForSegments: (sourceTime: number) => number; // Function to convert source time to visual time
 }
 
 export interface InteractionHandlers {
@@ -40,7 +41,7 @@ export interface InteractionHandlers {
 }
 
 const useTimelineInteraction = (props: TimelineInteractionProps) => {
-    const { subtitles, audioFiles, videoFile, currentTime, timelineVisualDuration, onSeek, onSeeking, onTimelineUpdate, onTimelineInteractionStart, onTimelineInteractionEnd, timelineRef, containerRef, onSelectSubtitle, onMarqueeSelect } = props;
+    const { subtitles, audioFiles, videoFile, currentTime, timelineVisualDuration, onSeek, onSeeking, onTimelineUpdate, onTimelineInteractionStart, onTimelineInteractionEnd, timelineRef, containerRef, onSelectSubtitle, onMarqueeSelect, adjustTimeForSegments } = props;
     const [interaction, setInteraction] = useState<InteractionState | null>(null);
     const [snapLinePosition, setSnapLinePosition] = useState<number | null>(null);
     const [marqueeRect, setMarqueeRect] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
@@ -143,12 +144,17 @@ const useTimelineInteraction = (props: TimelineInteractionProps) => {
             const snapPoints: number[] = [currentTime];
             subtitles.forEach(sub => {
                 if (sub.id !== interaction.itemId) {
-                    snapPoints.push(srtTimeToSeconds(sub.startTime));
-                    snapPoints.push(srtTimeToSeconds(sub.endTime));
+                    // Convert source time to visual time for snap points
+                    const visualStart = adjustTimeForSegments(srtTimeToSeconds(sub.startTime));
+                    const visualEnd = adjustTimeForSegments(srtTimeToSeconds(sub.endTime));
+                    snapPoints.push(visualStart);
+                    snapPoints.push(visualEnd);
                 }
             });
              audioFiles.forEach(audio => {
                 if (audio.id !== interaction.itemId) {
+                    // Audio startTime is already in visual/timeline coordinates, adjusted by frontend
+                    // So use it directly
                     snapPoints.push(audio.startTime || 0);
                     snapPoints.push((audio.startTime || 0) + (audio.duration || 0));
                 }

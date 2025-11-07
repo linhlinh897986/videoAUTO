@@ -117,7 +117,8 @@ const Timeline: React.FC<TimelineProps> = (props) => {
     } = useTimelineInteraction({ 
         ...props, 
         timelineRef: contentWrapperRef,
-        containerRef: timelineContainerRef 
+        containerRef: timelineContainerRef,
+        adjustTimeForSegments
     });
 
     const numSubtitleTracks = useMemo(() => {
