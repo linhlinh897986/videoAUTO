@@ -73,10 +73,17 @@ interface WindowWithFonts extends Window {
 declare global {
     interface Navigator {
         permissions: {
-            query(permissionDesc: { name: string }): Promise<PermissionStatus>;
+            query(permissionDesc: PermissionDescriptor | { name: string }): Promise<PermissionStatus>;
         };
     }
 }
+
+/**
+ * Test string for font detection
+ * Uses a mix of wide (m) and narrow (i, l) characters to maximize
+ * the chance of detecting differences when different fonts are used
+ */
+const FONT_TEST_STRING = 'mmmmmmmmmmlli';
 
 /**
  * Check if a font is available in the browser
@@ -95,19 +102,16 @@ function isFontAvailable(fontName: string): boolean {
     const context = fontTestCanvas.getContext('2d');
     if (!context) return false;
 
-    // Set a baseline font
-    // Using a string with varied character widths (m, i, l) to detect font differences reliably
-    const testString = 'mmmmmmmmmmlli';
     const fontSize = 72;
     const baselineFont = 'monospace';
 
     // Measure the test string with baseline font
     context.font = `${fontSize}px ${baselineFont}`;
-    const baselineWidth = context.measureText(testString).width;
+    const baselineWidth = context.measureText(FONT_TEST_STRING).width;
 
     // Measure with the font we're testing
     context.font = `${fontSize}px "${fontName}", ${baselineFont}`;
-    const testWidth = context.measureText(testString).width;
+    const testWidth = context.measureText(FONT_TEST_STRING).width;
 
     // If widths differ, the font is likely available
     return testWidth !== baselineWidth;
@@ -120,7 +124,8 @@ export async function getAvailableFonts(): Promise<string[]> {
     // Try to use the modern Font Access API if available
     if ('queryLocalFonts' in window) {
         try {
-            const permission = await navigator.permissions.query({ name: 'local-fonts' } as any);
+            // Note: 'local-fonts' is not a standard PermissionDescriptor name yet
+            const permission = await navigator.permissions.query({ name: 'local-fonts' } as PermissionDescriptor);
             if (permission.state === 'granted' || permission.state === 'prompt') {
                 const fonts = await (window as WindowWithFonts).queryLocalFonts!();
                 const fontNames = Array.from(
