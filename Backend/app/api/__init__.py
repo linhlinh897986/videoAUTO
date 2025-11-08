@@ -7,6 +7,7 @@ __all__ = [
     "asr",
     "custom_styles",
     "files",
+    "fonts",
     "health",
     "projects",
     "render",

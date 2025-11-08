@@ -15,6 +15,12 @@ from pydantic import BaseModel
 from app.core import DATA_ROOT, db
 
 
+# ASS format reference resolution for subtitle rendering
+# All subtitle dimensions are specified relative to this resolution
+REFERENCE_HEIGHT = 1080
+REFERENCE_WIDTH = 1920
+
+
 class VideoRenderRequest(BaseModel):
     video_file_id: str
     video_segments: List[Dict[str, Any]]
@@ -35,13 +41,45 @@ def _create_ass_subtitle_file(
     style: Optional[Dict[str, Any]],
     output_path: Path,
 ) -> None:
+    """
+    Create an ASS subtitle file with styling that matches the frontend preview.
+    
+    ASS Format Parameters (all values documented):
+    - Fontname: Font family name (from style.fontFamily)
+    - Fontsize: Font size in pixels at reference resolution (from style.fontSize)
+    - PrimaryColour: Main text color (from style.primaryColor)
+    - SecondaryColour: Secondary color for karaoke effects (hardcoded, not used in preview)
+    - OutlineColour: Outline/border color (from style.outlineColor)
+    - BackColour: Shadow color (hardcoded with alpha, no shadow in preview)
+    - Bold: -1 for bold, 0 for normal (hardcoded to 0, matches frontend normal weight)
+    - Italic: -1 for italic, 0 for normal (hardcoded to 0, not supported in preview)
+    - Underline: -1 for underline, 0 for none (hardcoded to 0, not supported in preview)
+    - StrikeOut: -1 for strikeout, 0 for none (hardcoded to 0, not supported in preview)
+    - ScaleX: Horizontal scaling percentage (hardcoded to 100, no scaling in preview)
+    - ScaleY: Vertical scaling percentage (hardcoded to 100, no scaling in preview)
+    - Spacing: Letter spacing in pixels (hardcoded to 0, matches frontend letterSpacing='0px')
+    - Angle: Rotation angle in degrees (hardcoded to 0, not supported in preview)
+    - BorderStyle: 1=outline+shadow, 3=opaque box (hardcoded to 1, matches preview outline)
+    - Outline: Outline width in pixels (from style.outlineWidth)
+    - Shadow: Shadow depth in pixels (hardcoded to 0, no shadow rendered in preview)
+    - Alignment: Text alignment (from style.horizontalAlign: 1=left, 2=center, 3=right)
+    - MarginL: Left margin in pixels (hardcoded to 10)
+    - MarginR: Right margin in pixels (hardcoded to 10)
+    - MarginV: Vertical margin from bottom in pixels (calculated from style.verticalMargin percentage)
+    - Encoding: Character encoding (hardcoded to 1 = default)
+    """
     font_family = style.get("fontFamily", "Arial") if style else "Arial"
-    font_size = style.get("fontSize", 24) if style else 24
+    font_size = style.get("fontSize", 48) if style else 48  # Match frontend default
     primary_color = style.get("primaryColor", "#FFFFFF") if style else "#FFFFFF"
     outline_color = style.get("outlineColor", "#000000") if style else "#000000"
-    outline_width = style.get("outlineWidth", 2) if style else 2
-    vertical_margin = style.get("verticalMargin", 10) if style else 10
+    outline_width = style.get("outlineWidth", 2.5) if style else 2.5  # Match frontend default
+    vertical_margin_percent = style.get("verticalMargin", 8) if style else 8  # Match frontend default (percentage)
     h_align = style.get("horizontalAlign", "center") if style else "center"
+    
+    # Convert vertical margin from percentage to pixels for reference resolution
+    # Frontend: y = height * (1 - verticalMargin / 100)
+    # For reference height: margin from bottom = REFERENCE_HEIGHT * (verticalMargin / 100)
+    vertical_margin = int(REFERENCE_HEIGHT * vertical_margin_percent / 100)
 
     def hex_to_ass(hex_color: str) -> str:
         hex_color = hex_color.lstrip("#")
@@ -74,8 +112,8 @@ Title: Rendered Subtitles
 ScriptType: v4.00+
 WrapStyle: 0
 ScaledBorderAndShadow: yes
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {REFERENCE_WIDTH}
+PlayResY: {REFERENCE_HEIGHT}
 YCbCr Matrix: TV.709
 
 [V4+ Styles]
