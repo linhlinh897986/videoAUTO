@@ -38,10 +38,12 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
     useEffect(() => {
         const loadFonts = async () => {
             try {
+                console.log('[StyleEditor] Loading fonts from backend...');
                 const fonts = await getCachedAvailableFonts();
+                console.log('[StyleEditor] Loaded fonts:', fonts.length, 'fonts:', fonts);
                 setAvailableFonts(fonts);
             } catch (error) {
-                console.error('Failed to load fonts:', error);
+                console.error('[StyleEditor] Failed to load fonts:', error);
                 setAvailableFonts(DEFAULT_FONTS);
             } finally {
                 setIsLoadingFonts(false);
@@ -167,6 +169,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
                 <div>
                     <label className="block text-sm font-medium text-gray-300 mb-1">
                         Phông chữ {isLoadingFonts && <span className="text-xs text-gray-500">(Đang tải...)</span>}
+                        {!isLoadingFonts && <span className="text-xs text-gray-500">({availableFonts.length} fonts từ backend)</span>}
                     </label>
                     <select
                         value={style.fontFamily}

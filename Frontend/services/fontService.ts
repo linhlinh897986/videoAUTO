@@ -29,6 +29,7 @@ const API_BASE_URL = rawBase ? rawBase.replace(/\/$/, '') : '';
  */
 export async function getAvailableFonts(): Promise<string[]> {
     try {
+        console.log('[fontService] Fetching fonts from:', `${API_BASE_URL}/fonts`);
         const response = await fetch(`${API_BASE_URL}/fonts`, {
             method: 'GET',
         });
@@ -38,16 +39,20 @@ export async function getAvailableFonts(): Promise<string[]> {
         }
 
         const fonts = await response.json();
+        console.log('[fontService] Received fonts from backend:', fonts);
         
         if (Array.isArray(fonts) && fonts.length > 0) {
             // Prioritize Arial as the default font by putting it first
-            return prioritizeDefaultFont(fonts, 'Arial');
+            const prioritized = prioritizeDefaultFont(fonts, 'Arial');
+            console.log('[fontService] Prioritized font list:', prioritized);
+            return prioritized;
         }
         
         // Fallback if response is invalid
+        console.warn('[fontService] Invalid response, using fallback fonts');
         return DEFAULT_FONTS;
     } catch (error) {
-        console.warn('Failed to fetch fonts from backend, using fallback list:', error);
+        console.warn('[fontService] Failed to fetch fonts from backend, using fallback list:', error);
         return DEFAULT_FONTS;
     }
 }
