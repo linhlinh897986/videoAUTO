@@ -32,10 +32,22 @@ export async function getAvailableFonts(): Promise<string[]> {
         console.log('[fontService] Fetching fonts from:', `${API_BASE_URL}/fonts`);
         const response = await fetch(`${API_BASE_URL}/fonts`, {
             method: 'GET',
+            headers: {
+                'ngrok-skip-browser-warning': 'true',  // Skip ngrok browser warning
+            },
         });
 
         if (!response.ok) {
             throw new Error(`Failed to fetch fonts: ${response.status}`);
+        }
+
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            console.error('[fontService] Received non-JSON response. Content-Type:', contentType);
+            console.error('[fontService] This usually means ngrok is showing an interstitial page.');
+            console.error('[fontService] If using ngrok, add "ngrok-skip-browser-warning" header or visit the URL in browser first.');
+            throw new Error('Received HTML instead of JSON from /fonts endpoint');
         }
 
         const fonts = await response.json();
