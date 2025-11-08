@@ -79,8 +79,30 @@ interface SubtitleBbox {
 
 
 /**
- * Draws subtitle text onto a canvas with advanced styling (outline).
- * Includes word wrapping.
+ * Draws subtitle text onto a canvas with styling that matches ASS subtitle rendering.
+ * 
+ * ASS Parameters Matched:
+ * - Fontname: style.fontFamily (with Arial fallback)
+ * - Fontsize: style.fontSize scaled to current video height (48px default at 1080p)
+ * - PrimaryColour: style.primaryColor (fillStyle)
+ * - OutlineColour: style.outlineColor (strokeStyle)
+ * - Outline: style.outlineWidth scaled to current video height (2.5px default at 1080p)
+ * - Alignment: style.horizontalAlign (left/center/right)
+ * - MarginV: style.verticalMargin as percentage from bottom (8% default)
+ * - Bold: Normal weight (matches ASS Bold=0)
+ * - BorderStyle: 1 (outline only, matches ASS BorderStyle=1, Shadow=0)
+ * 
+ * ASS Parameters NOT Matched (Canvas API limitations):
+ * - SecondaryColour: Not used for static subtitles
+ * - BackColour: No shadow rendered
+ * - Italic/Underline/StrikeOut: Not configurable
+ * - ScaleX/ScaleY: No scaling applied
+ * - Spacing: No letter spacing
+ * - Angle: No rotation
+ * - Shadow: Not rendered (Shadow=0 in ASS)
+ * - MarginL/MarginR: Not configurable
+ * 
+ * Includes word wrapping logic.
  */
 const drawSubtitles = (
     canvas: HTMLCanvasElement, 
