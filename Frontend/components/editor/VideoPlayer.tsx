@@ -91,13 +91,13 @@ interface SubtitleBbox {
  * - MarginV: style.verticalMargin as percentage from bottom (8% default)
  * - Bold: Normal weight (matches ASS Bold=0)
  * - BorderStyle: 1 (outline only, matches ASS BorderStyle=1, Shadow=0)
+ * - Spacing: 0 (no letter spacing, matches ASS Spacing=0)
  * 
  * ASS Parameters NOT Matched (Canvas API limitations):
  * - SecondaryColour: Not used for static subtitles
  * - BackColour: No shadow rendered
  * - Italic/Underline/StrikeOut: Not configurable
  * - ScaleX/ScaleY: No scaling applied
- * - Spacing: No letter spacing
  * - Angle: No rotation
  * - Shadow: Not rendered (Shadow=0 in ASS)
  * - MarginL/MarginR: Not configurable
@@ -127,6 +127,7 @@ const drawSubtitles = (
     const outlineWidth = (style.outlineWidth || 2.5) * scaleFactor;
 
     ctx.font = `${fontSize}px "${style.fontFamily || 'Arial'}"`;
+    ctx.letterSpacing = '0px'; // Match ASS Spacing=0 (no extra letter spacing)
     ctx.lineJoin = 'round';
     ctx.lineWidth = outlineWidth * 2; // lineWidth is centered, so double for full stroke
     ctx.strokeStyle = style.outlineColor || '#000000';

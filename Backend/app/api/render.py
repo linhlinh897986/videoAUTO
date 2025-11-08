@@ -57,7 +57,7 @@ def _create_ass_subtitle_file(
     - StrikeOut: -1 for strikeout, 0 for none (hardcoded to 0, not supported in preview)
     - ScaleX: Horizontal scaling percentage (hardcoded to 100, no scaling in preview)
     - ScaleY: Vertical scaling percentage (hardcoded to 100, no scaling in preview)
-    - Spacing: Letter spacing in pixels (hardcoded to 0, not supported in preview)
+    - Spacing: Letter spacing in pixels (hardcoded to 0, matches frontend letterSpacing='0px')
     - Angle: Rotation angle in degrees (hardcoded to 0, not supported in preview)
     - BorderStyle: 1=outline+shadow, 3=opaque box (hardcoded to 1, matches preview outline)
     - Outline: Outline width in pixels (from style.outlineWidth)
