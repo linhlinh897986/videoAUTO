@@ -29,9 +29,6 @@ const API_BASE_URL = rawBase ? rawBase.replace(/\/$/, '') : '';
  */
 export async function getAvailableFonts(): Promise<string[]> {
     try {
-        if (!API_BASE_URL) {
-            console.warn('[fontService] VITE_API_BASE_URL is not set. Using relative URL which may not work correctly.');
-        }
         console.log('[fontService] Fetching fonts from:', `${API_BASE_URL}/fonts`);
         const response = await fetch(`${API_BASE_URL}/fonts`, {
             method: 'GET',

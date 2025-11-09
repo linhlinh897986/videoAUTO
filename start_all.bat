@@ -14,10 +14,10 @@ if exist Backend (
 )
 
 REM 2) Start Frontend in a new window: install deps then run dev server
-if exist Frontend ( 
-  start "Frontend" cmd /k "cd /d Frontend && npm install && set VITE_API_BASE_URL=http://localhost:8000 && npm run dev"
+if exist frontend ( 
+  start "Frontend" cmd /k "cd /d frontend && npm install && npm run dev"
 ) else (
-  echo [WARN] Frontend folder not found. Skipping frontend startup.
+  echo [WARN] frontend folder not found. Skipping frontend startup.
 )
 
 echo === Launched. Check the two opened windows. ===
