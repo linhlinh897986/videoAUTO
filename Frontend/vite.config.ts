@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const backendOrigin = env.VITE_BACKEND_ORIGIN || 'http://127.0.0.1:8000';
     const proxy: Record<string, ProxyOptions> = {};
-    ['/health', '/projects', '/api-keys', '/custom-styles'].forEach((route) => {
+    ['/health', '/projects', '/api-keys', '/custom-styles', '/fonts'].forEach((route) => {
         proxy[route] = {
             target: backendOrigin,
             changeOrigin: true,
