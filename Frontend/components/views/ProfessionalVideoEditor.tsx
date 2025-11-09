@@ -1277,6 +1277,11 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
                     onPlay={handlePlay}
                     onPause={handlePause}
                     onSubtitleStyleChange={handleSubtitleStyleChange}
+                    onHardsubBoxChange={(box: BoundingBox) => {
+                        const updateFn = (prevState: EditorState) => ({ ...prevState, hardsubCoverBox: box });
+                        setLiveEditorState(updateFn);
+                        setEditorState(updateFn);
+                    }}
                 />
             </div>
             <div onMouseDown={handleMouseDown('horizontal')} className="w-1.5 bg-gray-700 cursor-col-resize hover:bg-indigo-500 transition-colors flex-shrink-0 z-10" />
