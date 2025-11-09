@@ -268,6 +268,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         startY: number;
         startBox: BoundingBox | null;
     }>({ isDragging: false, dragType: null, startY: 0, startBox: null });
+    
+    // State to track if hardsub overlay is selected
+    const [isHardsubSelected, setIsHardsubSelected] = useState(false);
 
     const glState = useRef<{
         gl: WebGLRenderingContext | null,
@@ -539,6 +542,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         e.preventDefault();
         e.stopPropagation();
         
+        // Select the overlay when clicked
+        setIsHardsubSelected(true);
+        
         setHardsubDragState({
             isDragging: true,
             dragType,
@@ -598,7 +604,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     return (
         <div className="w-full h-full p-4 flex flex-col">
-            <div ref={containerRef} className="bg-black flex-grow flex items-center justify-center relative group">
+            <div 
+                ref={containerRef} 
+                className="bg-black flex-grow flex items-center justify-center relative group"
+                onClick={() => {
+                    // Deselect hardsub overlay when clicking outside of it
+                    if (isHardsubSelected) {
+                        setIsHardsubSelected(false);
+                    }
+                }}
+            >
                 {isLoading && <LoadingSpinner className="w-10 h-10" />}
                 
                 <video 
@@ -635,13 +650,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                 height: `${hardsubCoverBox.height}%`,
                                 backdropFilter: 'blur(10px)',
                                 pointerEvents: onHardsubBoxChange ? 'auto' : 'none',
-                                cursor: hardsubDragState.isDragging ? 'grabbing' : 'grab',
-                                border: onHardsubBoxChange ? '2px dashed rgba(255, 255, 255, 0.5)' : 'none',
+                                cursor: hardsubDragState.isDragging ? 'grabbing' : (onHardsubBoxChange ? 'grab' : 'default'),
+                                border: isHardsubSelected ? '2px solid #00CED1' : 'none', // Cyan border when selected
                             }}
                             onMouseDown={(e) => handleHardsubMouseDown(e, 'move')}
                         >
-                            {/* Top resize handle */}
-                            {onHardsubBoxChange && (
+                            {/* Top resize handle - only show when selected */}
+                            {onHardsubBoxChange && isHardsubSelected && (
                                 <div
                                     style={{
                                         position: 'absolute',
@@ -650,7 +665,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                         right: '0',
                                         height: '12px',
                                         cursor: 'ns-resize',
-                                        backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                                        backgroundColor: 'rgba(0, 206, 209, 0.5)', // Cyan color for resize handles
                                         borderRadius: '6px',
                                     }}
                                     onMouseDown={(e) => {
@@ -659,8 +674,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                     }}
                                 />
                             )}
-                            {/* Bottom resize handle */}
-                            {onHardsubBoxChange && (
+                            {/* Bottom resize handle - only show when selected */}
+                            {onHardsubBoxChange && isHardsubSelected && (
                                 <div
                                     style={{
                                         position: 'absolute',
@@ -669,7 +684,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                         right: '0',
                                         height: '12px',
                                         cursor: 'ns-resize',
-                                        backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                                        backgroundColor: 'rgba(0, 206, 209, 0.5)', // Cyan color for resize handles
                                         borderRadius: '6px',
                                     }}
                                     onMouseDown={(e) => {
