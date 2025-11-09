@@ -6,7 +6,7 @@ import io
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -16,6 +16,19 @@ from PIL import Image
 from pydantic import BaseModel
 
 from app.core import db
+
+# Try to import GPU-accelerated OCR libraries
+try:
+    import torch
+    import easyocr
+    GPU_AVAILABLE = torch.cuda.is_available()
+    if GPU_AVAILABLE:
+        print("GPU detected - EasyOCR GPU mode enabled")
+    else:
+        print("GPU not detected - will use CPU-based OCR")
+except ImportError:
+    GPU_AVAILABLE = False
+    print("EasyOCR not installed - using pytesseract (CPU only)")
 
 
 class BoundingBox(BaseModel):
@@ -35,8 +48,19 @@ class OCRAnalysisRequest(BaseModel):
 
 router = APIRouter()
 
+# Initialize EasyOCR reader globally (expensive operation, done once)
+EASYOCR_READER = None
+if GPU_AVAILABLE:
+    try:
+        # Initialize with Chinese and English support
+        EASYOCR_READER = easyocr.Reader(['ch_sim', 'en'], gpu=True, verbose=False)
+        print("EasyOCR GPU reader initialized successfully")
+    except Exception as e:
+        print(f"Failed to initialize EasyOCR GPU reader: {e}")
+        GPU_AVAILABLE = False
 
-def _check_tesseract_installation(language: str = "chi_sim") -> tuple[bool, str]:
+
+def _check_tesseract_installation(language: str = "chi_sim") -> Tuple[bool, str]:
     """
     Check if Tesseract is properly installed and the required language data is available.
     
@@ -184,23 +208,96 @@ def _extract_video_frames(
             temp_video_path.unlink(missing_ok=True)
 
 
+def _process_single_frame_ocr_gpu(
+    frame: np.ndarray,
+    video_height: int,
+) -> Tuple[List[Dict[str, int]], bool]:
+    """
+    Process a single frame with GPU-accelerated EasyOCR.
+    
+    Args:
+        frame: Video frame as numpy array
+        video_height: Height of video in pixels
+    
+    Returns:
+        Tuple of (bounding boxes found, success flag)
+    """
+    bboxes = []
+    try:
+        # EasyOCR expects RGB format
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Run EasyOCR (returns list of (bbox, text, confidence))
+        results = EASYOCR_READER.readtext(rgb_frame)
+        
+        # Group words into lines based on their vertical position
+        # Filter for text in bottom 30% of frame
+        lines_dict = {}  # y_position -> list of word boxes
+        
+        for bbox, text, confidence in results:
+            if confidence > 0.6:  # Confidence threshold
+                # bbox is [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                x0 = int(min(point[0] for point in bbox))
+                y0 = int(min(point[1] for point in bbox))
+                x1 = int(max(point[0] for point in bbox))
+                y1 = int(max(point[1] for point in bbox))
+                
+                # Check if in bottom 30%
+                if y0 > video_height * 0.7:
+                    # Group by approximate line (within 5 pixels)
+                    line_y = round(y0 / 5) * 5
+                    if line_y not in lines_dict:
+                        lines_dict[line_y] = []
+                    lines_dict[line_y].append({
+                        "x0": x0,
+                        "y0": y0,
+                        "x1": x1,
+                        "y1": y1,
+                    })
+        
+        # Merge words in each line into a single bounding box
+        for line_boxes in lines_dict.values():
+            if line_boxes:
+                min_x = min(box["x0"] for box in line_boxes)
+                max_x = max(box["x1"] for box in line_boxes)
+                min_y = min(box["y0"] for box in line_boxes)
+                max_y = max(box["y1"] for box in line_boxes)
+                
+                bboxes.append({
+                    "x0": min_x,
+                    "y0": min_y,
+                    "x1": max_x,
+                    "y1": max_y,
+                })
+        
+        return bboxes, True
+    except Exception as e:
+        print(f"GPU OCR error on frame: {e}")
+        return [], False
+
+
 def _process_single_frame_ocr(
     frame: np.ndarray,
     video_height: int,
     language: str,
-) -> tuple[List[Dict[str, int]], bool]:
+) -> Tuple[List[Dict[str, int]], bool]:
     """
-    Process a single frame with OCR. Used for parallel processing.
+    Process a single frame with OCR. Uses GPU if available, falls back to CPU.
     Uses line-level detection to match frontend behavior.
     
     Args:
         frame: Video frame as numpy array
         video_height: Height of video in pixels
-        language: Tesseract language code
+        language: Tesseract language code (ignored if using GPU)
     
     Returns:
         Tuple of (bounding boxes found, success flag)
     """
+    # Try GPU first if available
+    if GPU_AVAILABLE and EASYOCR_READER is not None:
+        return _process_single_frame_ocr_gpu(frame, video_height)
+    
+    # Fall back to CPU-based Tesseract OCR
     bboxes = []
     try:
         # Convert BGR (OpenCV) to RGB (PIL)
@@ -347,15 +444,18 @@ async def analyze_hardsubs(
     performs OCR analysis to detect text in the bottom portion of frames,
     and returns a bounding box that can be used to cover the hardcoded subtitles.
     """
-    # Check if Tesseract is properly installed
-    is_available, error_msg = _check_tesseract_installation(request.language)
-    if not is_available:
-        return {
-            "status": "error",
-            "message": f"Tesseract OCR configuration error: {error_msg}",
-            "detected": False,
-            "tesseract_error": True,
-        }
+    # Skip Tesseract check if GPU is available
+    if not (GPU_AVAILABLE and EASYOCR_READER is not None):
+        # Check if Tesseract is properly installed (only needed for CPU fallback)
+        is_available, error_msg = _check_tesseract_installation(request.language)
+        if not is_available:
+            return {
+                "status": "error",
+                "message": f"Tesseract OCR configuration error: {error_msg}. GPU OCR is not available either.",
+                "detected": False,
+                "tesseract_error": True,
+                "ocr_engine": "none",
+            }
     
     # Verify project exists
     project = db.get_project(project_id)
@@ -394,14 +494,19 @@ async def analyze_hardsubs(
         
         # If all frames failed, return an error
         if failed_frames > 0 and successful_frames == 0:
+            ocr_engine = "GPU (EasyOCR)" if (GPU_AVAILABLE and EASYOCR_READER is not None) else "CPU (Tesseract)"
             return {
                 "status": "error",
-                "message": f"OCR failed on all {failed_frames} frames. Tesseract may not be configured correctly.",
+                "message": f"OCR failed on all {failed_frames} frames. OCR engine may not be configured correctly.",
                 "detected": False,
                 "frames_analyzed": len(frames),
                 "successful_frames": successful_frames,
                 "failed_frames": failed_frames,
+                "ocr_engine": ocr_engine,
             }
+        
+        # Determine which OCR engine was used
+        ocr_engine = "GPU (EasyOCR)" if (GPU_AVAILABLE and EASYOCR_READER is not None) else "CPU (Tesseract)"
         
         if bounding_box is None:
             message = "No hardcoded subtitles detected"
@@ -415,6 +520,7 @@ async def analyze_hardsubs(
                 "frames_analyzed": len(frames),
                 "successful_frames": successful_frames,
                 "failed_frames": failed_frames,
+                "ocr_engine": ocr_engine,
             }
         
         return {
@@ -424,6 +530,7 @@ async def analyze_hardsubs(
             "frames_analyzed": len(frames),
             "successful_frames": successful_frames,
             "failed_frames": failed_frames,
+            "ocr_engine": ocr_engine,
             "bounding_box": {
                 "x": bounding_box.x,
                 "y": bounding_box.y,
