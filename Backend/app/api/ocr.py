@@ -191,6 +191,7 @@ def _process_single_frame_ocr(
 ) -> tuple[List[Dict[str, int]], bool]:
     """
     Process a single frame with OCR. Used for parallel processing.
+    Uses line-level detection to match frontend behavior.
     
     Args:
         frame: Video frame as numpy array
@@ -206,14 +207,17 @@ def _process_single_frame_ocr(
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb_frame)
         
-        # Run OCR with bounding box data
+        # Run OCR with line-level bounding box data (matches frontend behavior)
         ocr_data = pytesseract.image_to_data(
             pil_image,
             lang=language,
             output_type=pytesseract.Output.DICT,
         )
         
+        # Group words into lines based on their vertical position
         # Filter for text in bottom 30% of frame with confidence > 60
+        lines_dict = {}  # y_position -> list of word boxes
+        
         for i, conf in enumerate(ocr_data["conf"]):
             if conf > 60:  # Confidence threshold
                 y = ocr_data["top"][i]
@@ -221,12 +225,33 @@ def _process_single_frame_ocr(
                     x = ocr_data["left"][i]
                     w = ocr_data["width"][i]
                     h = ocr_data["height"][i]
-                    bboxes.append({
+                    
+                    # Group by approximate line (within 5 pixels)
+                    line_y = round(y / 5) * 5
+                    if line_y not in lines_dict:
+                        lines_dict[line_y] = []
+                    lines_dict[line_y].append({
                         "x0": x,
                         "y0": y,
                         "x1": x + w,
                         "y1": y + h,
                     })
+        
+        # Merge words in each line into a single bounding box
+        for line_boxes in lines_dict.values():
+            if line_boxes:
+                min_x = min(box["x0"] for box in line_boxes)
+                max_x = max(box["x1"] for box in line_boxes)
+                min_y = min(box["y0"] for box in line_boxes)
+                max_y = max(box["y1"] for box in line_boxes)
+                
+                bboxes.append({
+                    "x0": min_x,
+                    "y0": min_y,
+                    "x1": max_x,
+                    "y1": max_y,
+                })
+        
         return bboxes, True
     except Exception as e:
         print(f"OCR error on frame: {e}")
