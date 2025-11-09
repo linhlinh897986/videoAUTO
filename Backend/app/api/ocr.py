@@ -34,6 +34,30 @@ class OCRAnalysisRequest(BaseModel):
 router = APIRouter()
 
 
+def _check_tesseract_installation(language: str = "chi_sim") -> tuple[bool, str]:
+    """
+    Check if Tesseract is properly installed and the required language data is available.
+    
+    Returns:
+        Tuple of (is_available, error_message)
+    """
+    try:
+        # Check if tesseract command is available
+        version = pytesseract.get_tesseract_version()
+        
+        # Try to get available languages
+        langs = pytesseract.get_languages()
+        
+        if language not in langs:
+            return False, f"Tesseract language '{language}' not installed. Available: {', '.join(langs)}"
+        
+        return True, ""
+    except pytesseract.TesseractNotFoundError:
+        return False, "Tesseract OCR is not installed on the server"
+    except Exception as e:
+        return False, f"Error checking Tesseract: {str(e)}"
+
+
 def _extract_video_frames(
     video_data: bytes,
     num_samples: int,
@@ -107,7 +131,7 @@ def _analyze_frames_for_subtitles(
     video_width: int,
     video_height: int,
     language: str = "chi_sim",
-) -> Optional[BoundingBox]:
+) -> tuple[Optional[BoundingBox], int, int]:
     """
     Analyze video frames using OCR to detect hardcoded subtitle positions.
     
@@ -118,9 +142,11 @@ def _analyze_frames_for_subtitles(
         language: Tesseract language code (e.g., 'chi_sim', 'eng')
     
     Returns:
-        BoundingBox if subtitles detected, None otherwise
+        Tuple of (BoundingBox if subtitles detected or None, successful_frames, failed_frames)
     """
     all_bboxes: List[Dict[str, int]] = []
+    successful_frames = 0
+    failed_frames = 0
     
     for frame in frames:
         # Convert BGR (OpenCV) to RGB (PIL)
@@ -149,13 +175,15 @@ def _analyze_frames_for_subtitles(
                             "x1": x + w,
                             "y1": y + h,
                         })
+            successful_frames += 1
         except Exception as e:
             # Log error but continue processing other frames
+            failed_frames += 1
             print(f"OCR error on frame: {e}")
             continue
     
     if not all_bboxes:
-        return None
+        return None, successful_frames, failed_frames
     
     # Find overall horizontal extent and the absolute bottom edge
     min_x = min(box["x0"] for box in all_bboxes)
@@ -181,7 +209,7 @@ def _analyze_frames_for_subtitles(
         enabled=True,
     )
     
-    return bounding_box
+    return bounding_box, successful_frames, failed_frames
 
 
 @router.post("/projects/{project_id}/videos/{video_id}/analyze-hardsubs")
@@ -197,6 +225,16 @@ async def analyze_hardsubs(
     performs OCR analysis to detect text in the bottom portion of frames,
     and returns a bounding box that can be used to cover the hardcoded subtitles.
     """
+    # Check if Tesseract is properly installed
+    is_available, error_msg = _check_tesseract_installation(request.language)
+    if not is_available:
+        return {
+            "status": "error",
+            "message": f"Tesseract OCR configuration error: {error_msg}",
+            "detected": False,
+            "tesseract_error": True,
+        }
+    
     # Verify project exists
     project = db.get_project(project_id)
     if project is None:
@@ -224,19 +262,36 @@ async def analyze_hardsubs(
             }
         
         # Analyze frames for subtitles
-        bounding_box = _analyze_frames_for_subtitles(
+        bounding_box, successful_frames, failed_frames = _analyze_frames_for_subtitles(
             frames,
             video_width,
             video_height,
             request.language,
         )
         
-        if bounding_box is None:
+        # If all frames failed, return an error
+        if failed_frames > 0 and successful_frames == 0:
             return {
-                "status": "success",
-                "message": "No hardcoded subtitles detected",
+                "status": "error",
+                "message": f"OCR failed on all {failed_frames} frames. Tesseract may not be configured correctly.",
                 "detected": False,
                 "frames_analyzed": len(frames),
+                "successful_frames": successful_frames,
+                "failed_frames": failed_frames,
+            }
+        
+        if bounding_box is None:
+            message = "No hardcoded subtitles detected"
+            if failed_frames > 0:
+                message += f" ({failed_frames}/{len(frames)} frames had OCR errors)"
+            
+            return {
+                "status": "success",
+                "message": message,
+                "detected": False,
+                "frames_analyzed": len(frames),
+                "successful_frames": successful_frames,
+                "failed_frames": failed_frames,
             }
         
         return {
@@ -244,6 +299,8 @@ async def analyze_hardsubs(
             "message": "Hardcoded subtitles detected successfully",
             "detected": True,
             "frames_analyzed": len(frames),
+            "successful_frames": successful_frames,
+            "failed_frames": failed_frames,
             "bounding_box": {
                 "x": bounding_box.x,
                 "y": bounding_box.y,

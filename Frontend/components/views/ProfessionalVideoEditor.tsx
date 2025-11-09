@@ -1006,7 +1006,11 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
             setAnalysisProgress({ progress: 1, status: 'Hoàn thành!' });
 
             if (response.status === 'error') {
-                alert(`Lỗi khi phân tích: ${response.message}`);
+                if (response.tesseract_error) {
+                    alert(`Lỗi cấu hình Tesseract OCR:\n\n${response.message}\n\nVui lòng cài đặt Tesseract và dữ liệu ngôn ngữ trên server:\nsudo apt-get install tesseract-ocr tesseract-ocr-chi-sim`);
+                } else {
+                    alert(`Lỗi khi phân tích: ${response.message}`);
+                }
                 return;
             }
 
@@ -1022,9 +1026,18 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
                 const updateFn = (prevState: EditorState) => ({...prevState, hardsubCoverBox: newCoverBox });
                 setLiveEditorState(updateFn);
                 setEditorState(updateFn);
-                alert(`Đã phát hiện và tạo vùng che hardsub! (Đã quét ${response.frames_analyzed} khung hình)`);
+                
+                let message = `Đã phát hiện và tạo vùng che hardsub! (Đã quét ${response.frames_analyzed} khung hình)`;
+                if (response.failed_frames && response.failed_frames > 0) {
+                    message += `\n\nLưu ý: ${response.failed_frames} khung hình bị lỗi OCR`;
+                }
+                alert(message);
             } else {
-                alert("Không phát hiện thấy hardsub ở cuối video.");
+                let message = "Không phát hiện thấy hardsub ở cuối video.";
+                if (response.failed_frames && response.failed_frames > 0) {
+                    message += `\n\nLưu ý: ${response.failed_frames}/${response.frames_analyzed} khung hình bị lỗi OCR`;
+                }
+                alert(message);
             }
 
         } catch (error) {

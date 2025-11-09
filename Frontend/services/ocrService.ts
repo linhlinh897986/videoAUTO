@@ -14,6 +14,9 @@ export interface OCRAnalysisResponse {
     message: string;
     detected: boolean;
     frames_analyzed?: number;
+    successful_frames?: number;
+    failed_frames?: number;
+    tesseract_error?: boolean;
     bounding_box?: BoundingBox;
 }
 

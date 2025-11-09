@@ -167,6 +167,16 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                                 videoInfo.id,
                                 { numSamples: 20, language: 'chi_sim' }
                             );
+                            
+                            if (response.status === 'error') {
+                                if (response.tesseract_error) {
+                                    setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi: Tesseract chưa được cài đặt' }));
+                                } else {
+                                    setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi phân tích hardsub' }));
+                                }
+                                return;
+                            }
+                            
                             if (response.detected && response.bounding_box) {
                                 onUpdateProject(project.id, p => ({
                                     files: p.files.map(f => f.id === videoInfo.id ? { ...f, hardsubCoverBox: response.bounding_box } : f)
@@ -174,6 +184,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                             }
                         } catch (error) {
                             console.error('Error analyzing hardsubs:', error);
+                            setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi phân tích hardsub' }));
                         }
                       })()
                     : Promise.resolve();
