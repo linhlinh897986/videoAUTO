@@ -294,14 +294,14 @@ def _analyze_frames_for_subtitles(
     # Define the box anchored to the bottom, tall enough for two lines
     new_min_y = max_y - (median_height * 2.5)
     
-    # Use smaller padding to create a tighter box
+    # Use smaller padding for height
     PADDING_Y = 0.5  # smaller vertical padding
-    PADDING_X = 1.0
     
+    # Width is always 100% (covers full width of video)
     bounding_box = BoundingBox(
-        x=max(0, (min_x / video_width) * 100 - PADDING_X),
+        x=0,  # Always start from left edge
         y=max(0, (new_min_y / video_height) * 100 - PADDING_Y),
-        width=min(100, ((max_x - min_x) / video_width) * 100 + 2 * PADDING_X),
+        width=100,  # Always cover full width
         height=min(100, ((max_y - new_min_y) / video_height) * 100 + 2 * PADDING_Y),
         enabled=True,
     )
