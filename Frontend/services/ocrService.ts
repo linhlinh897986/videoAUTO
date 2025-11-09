@@ -7,6 +7,7 @@ export interface OCRAnalysisRequest {
     video_file_id: string;
     num_samples?: number;
     language?: string;
+    max_workers?: number;
 }
 
 export interface OCRAnalysisResponse {
@@ -22,10 +23,14 @@ export interface OCRAnalysisResponse {
 
 /**
  * Analyze a video for hardcoded subtitles using backend OCR.
+ * Uses parallel processing for faster analysis.
  * 
  * @param projectId - The project ID
  * @param videoId - The video file ID
  * @param options - Optional configuration for analysis
+ * @param options.numSamples - Number of frames to sample (default: 20)
+ * @param options.language - Tesseract language code (default: 'chi_sim')
+ * @param options.maxWorkers - Number of parallel OCR workers (default: 4)
  * @returns Promise with analysis results including bounding box if detected
  */
 export const analyzeHardcodedSubtitles = async (
@@ -34,12 +39,14 @@ export const analyzeHardcodedSubtitles = async (
     options: {
         numSamples?: number;
         language?: string;
+        maxWorkers?: number;
     } = {}
 ): Promise<OCRAnalysisResponse> => {
     const requestBody: OCRAnalysisRequest = {
         video_file_id: videoId,
         num_samples: options.numSamples ?? 20,
         language: options.language ?? 'chi_sim',
+        max_workers: options.maxWorkers ?? 4,
     };
 
     const response = await fetch(

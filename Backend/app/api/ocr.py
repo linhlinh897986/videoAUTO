@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import io
 import subprocess
 import tempfile
@@ -29,6 +30,7 @@ class OCRAnalysisRequest(BaseModel):
     video_file_id: str
     num_samples: int = 20
     language: str = "chi_sim"  # Default to Chinese simplified
+    max_workers: int = 4  # Number of parallel OCR workers
 
 
 router = APIRouter()
@@ -58,6 +60,50 @@ def _check_tesseract_installation(language: str = "chi_sim") -> tuple[bool, str]
         return False, f"Error checking Tesseract: {str(e)}"
 
 
+def _get_video_rotation(video_path: Path) -> int:
+    """
+    Detect video rotation metadata using ffprobe.
+    
+    Returns rotation angle (0, 90, 180, 270) based on video metadata.
+    """
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream_tags=rotate",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if result.returncode == 0 and result.stdout:
+            rotation = int(result.stdout.decode().strip())
+            return rotation
+    except (ValueError, Exception):
+        pass
+    return 0
+
+
+def _apply_rotation(frame: np.ndarray, rotation: int) -> np.ndarray:
+    """
+    Apply rotation correction to frame based on metadata.
+    
+    Args:
+        frame: Video frame as numpy array
+        rotation: Rotation angle (90, 180, 270)
+    
+    Returns:
+        Rotated frame
+    """
+    if rotation == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    elif rotation == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    elif rotation == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return frame
+
+
 def _extract_video_frames(
     video_data: bytes,
     num_samples: int,
@@ -65,6 +111,7 @@ def _extract_video_frames(
 ) -> tuple[List[np.ndarray], int, int]:
     """
     Extract frames from video at regular intervals for OCR analysis.
+    Handles video rotation metadata to ensure frames are correctly oriented.
     
     Returns:
         Tuple of (frames, video_width, video_height)
@@ -75,6 +122,9 @@ def _extract_video_frames(
         temp_video.flush()
         
         try:
+            # Get video rotation metadata
+            rotation = _get_video_rotation(temp_video_path)
+            
             # Get video duration if not provided
             if video_duration is None:
                 ffprobe_cmd = [
@@ -117,13 +167,70 @@ def _extract_video_frames(
                 ret, frame = cap.read()
                 
                 if ret:
+                    # Apply rotation correction if needed
+                    if rotation != 0:
+                        frame = _apply_rotation(frame, rotation)
                     frames.append(frame)
             
             cap.release()
+            
+            # Adjust dimensions if video was rotated 90 or 270 degrees
+            if rotation in [90, 270]:
+                video_width, video_height = video_height, video_width
+            
             return frames, video_width, video_height
             
         finally:
             temp_video_path.unlink(missing_ok=True)
+
+
+def _process_single_frame_ocr(
+    frame: np.ndarray,
+    video_height: int,
+    language: str,
+) -> tuple[List[Dict[str, int]], bool]:
+    """
+    Process a single frame with OCR. Used for parallel processing.
+    
+    Args:
+        frame: Video frame as numpy array
+        video_height: Height of video in pixels
+        language: Tesseract language code
+    
+    Returns:
+        Tuple of (bounding boxes found, success flag)
+    """
+    bboxes = []
+    try:
+        # Convert BGR (OpenCV) to RGB (PIL)
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(rgb_frame)
+        
+        # Run OCR with bounding box data
+        ocr_data = pytesseract.image_to_data(
+            pil_image,
+            lang=language,
+            output_type=pytesseract.Output.DICT,
+        )
+        
+        # Filter for text in bottom 30% of frame with confidence > 60
+        for i, conf in enumerate(ocr_data["conf"]):
+            if conf > 60:  # Confidence threshold
+                y = ocr_data["top"][i]
+                if y > video_height * 0.7:  # Bottom 30%
+                    x = ocr_data["left"][i]
+                    w = ocr_data["width"][i]
+                    h = ocr_data["height"][i]
+                    bboxes.append({
+                        "x0": x,
+                        "y0": y,
+                        "x1": x + w,
+                        "y1": y + h,
+                    })
+        return bboxes, True
+    except Exception as e:
+        print(f"OCR error on frame: {e}")
+        return [], False
 
 
 def _analyze_frames_for_subtitles(
@@ -131,15 +238,18 @@ def _analyze_frames_for_subtitles(
     video_width: int,
     video_height: int,
     language: str = "chi_sim",
+    max_workers: int = 4,
 ) -> tuple[Optional[BoundingBox], int, int]:
     """
     Analyze video frames using OCR to detect hardcoded subtitle positions.
+    Uses parallel processing for faster OCR analysis.
     
     Args:
         frames: List of video frames as numpy arrays
         video_width: Width of video in pixels
         video_height: Height of video in pixels
         language: Tesseract language code (e.g., 'chi_sim', 'eng')
+        max_workers: Number of parallel workers for OCR processing
     
     Returns:
         Tuple of (BoundingBox if subtitles detected or None, successful_frames, failed_frames)
@@ -148,39 +258,26 @@ def _analyze_frames_for_subtitles(
     successful_frames = 0
     failed_frames = 0
     
-    for frame in frames:
-        # Convert BGR (OpenCV) to RGB (PIL)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(rgb_frame)
+    # Use ThreadPoolExecutor for parallel OCR processing
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all OCR tasks
+        future_to_frame = {
+            executor.submit(_process_single_frame_ocr, frame, video_height, language): idx
+            for idx, frame in enumerate(frames)
+        }
         
-        # Run OCR with bounding box data
-        try:
-            ocr_data = pytesseract.image_to_data(
-                pil_image,
-                lang=language,
-                output_type=pytesseract.Output.DICT,
-            )
-            
-            # Filter for text in bottom 30% of frame with confidence > 60
-            for i, conf in enumerate(ocr_data["conf"]):
-                if conf > 60:  # Confidence threshold
-                    y = ocr_data["top"][i]
-                    if y > video_height * 0.7:  # Bottom 30%
-                        x = ocr_data["left"][i]
-                        w = ocr_data["width"][i]
-                        h = ocr_data["height"][i]
-                        all_bboxes.append({
-                            "x0": x,
-                            "y0": y,
-                            "x1": x + w,
-                            "y1": y + h,
-                        })
-            successful_frames += 1
-        except Exception as e:
-            # Log error but continue processing other frames
-            failed_frames += 1
-            print(f"OCR error on frame: {e}")
-            continue
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_frame):
+            try:
+                bboxes, success = future.result()
+                if success:
+                    successful_frames += 1
+                    all_bboxes.extend(bboxes)
+                else:
+                    failed_frames += 1
+            except Exception as e:
+                failed_frames += 1
+                print(f"OCR processing error: {e}")
     
     if not all_bboxes:
         return None, successful_frames, failed_frames
@@ -261,12 +358,13 @@ async def analyze_hardsubs(
                 "detected": False,
             }
         
-        # Analyze frames for subtitles
+        # Analyze frames for subtitles with parallel processing
         bounding_box, successful_frames, failed_frames = _analyze_frames_for_subtitles(
             frames,
             video_width,
             video_height,
             request.language,
+            request.max_workers,
         )
         
         # If all frames failed, return an error

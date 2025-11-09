@@ -165,7 +165,7 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                             const response = await analyzeHardcodedSubtitles(
                                 project.id,
                                 videoInfo.id,
-                                { numSamples: 20, language: 'chi_sim' }
+                                { numSamples: 20, language: 'chi_sim', maxWorkers: 8 }
                             );
                             
                             if (response.status === 'error') {
