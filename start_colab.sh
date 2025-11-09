@@ -78,6 +78,9 @@ ensure_ngrok() {
 version: 2
 authtoken: $NGROK_TOKEN
 tunnels:
+  backend:
+    addr: $BACKEND_PORT
+    proto: http
   frontend:
     addr: $FRONTEND_PORT
     proto: http
@@ -154,17 +157,36 @@ start_frontend() {
     cleanup_process "npm run dev"
     wait_for_backend
 
-    log "Starting Vite frontend on port $FRONTEND_PORT (API base: local backend)"
-    (cd "$ROOT_DIR/Frontend" && VITE_API_BASE_URL="" nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" > "$LOG_DIR/frontend.log" 2>&1 &)
+    # Wait for ngrok backend tunnel to be ready and get the URL
+    local backend_url=""
+    local attempts=0
+    while [ $attempts -lt 15 ]; do
+        backend_url=$(extract_ngrok_url backend)
+        if [ -n "$backend_url" ]; then
+            break
+        fi
+        sleep 2
+        attempts=$((attempts + 1))
+    done
+
+    if [ -z "$backend_url" ]; then
+        log "WARNING: Backend ngrok tunnel not ready, using local URL (may not work from public frontend)"
+        backend_url="http://127.0.0.1:$BACKEND_PORT"
+    fi
+
+    log "Starting Vite frontend on port $FRONTEND_PORT (API base: $backend_url)"
+    (cd "$ROOT_DIR/Frontend" && VITE_API_BASE_URL="$backend_url" nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" > "$LOG_DIR/frontend.log" 2>&1 &)
 }
 
 print_summary() {
     local frontend_url=""
+    local backend_url=""
 
     local attempts=0
     while [ $attempts -lt 15 ]; do
         frontend_url=$(extract_ngrok_url frontend)
-        if [ -n "$frontend_url" ]; then
+        backend_url=$(extract_ngrok_url backend)
+        if [ -n "$frontend_url" ] && [ -n "$backend_url" ]; then
             break
         fi
         sleep 2
@@ -173,6 +195,7 @@ print_summary() {
 
     log "--- Setup Complete ---"
     log "Backend local URL:   http://127.0.0.1:$BACKEND_PORT (inside Colab runtime)"
+    log "Backend public URL:  $backend_url"
     log "Frontend public URL: $frontend_url"
     log "Uploaded media path: $ROOT_DIR/Backend/data/files"
     log "ASR SRT exports:     $ROOT_DIR/Backend/data/asr"
