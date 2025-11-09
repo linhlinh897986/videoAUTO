@@ -254,11 +254,17 @@ async def analyze_hardsubs(
         }
         
     except Exception as e:
+        # Log the error for debugging but don't expose details to client
+        import logging
         import traceback
-        error_details = traceback.format_exc()
+        
+        logger = logging.getLogger(__name__)
+        logger.error(f"OCR analysis failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return generic error message without exposing internal details
         return {
             "status": "error",
-            "message": f"Error analyzing video: {str(e)}",
-            "details": error_details,
+            "message": "Failed to analyze video. Please check server logs for details.",
             "detected": False,
         }

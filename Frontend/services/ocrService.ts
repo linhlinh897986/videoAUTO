@@ -15,7 +15,6 @@ export interface OCRAnalysisResponse {
     detected: boolean;
     frames_analyzed?: number;
     bounding_box?: BoundingBox;
-    details?: string;
 }
 
 /**
