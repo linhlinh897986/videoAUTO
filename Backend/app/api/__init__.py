@@ -9,6 +9,7 @@ __all__ = [
     "files",
     "fonts",
     "health",
+    "ocr",
     "projects",
     "render",
     "tts",

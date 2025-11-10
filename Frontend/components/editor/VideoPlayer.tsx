@@ -237,13 +237,15 @@ interface VideoPlayerProps {
     onPause: () => void;
     onTogglePlayPause: () => void;
     onSubtitleStyleChange: (style: SubtitleStyle) => void;
+    onHardsubBoxChange?: (box: BoundingBox) => void;
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({
     videoRef, videoUrl, isLoading, segments, masterVolumeDb, isMuted, activeSubtitlesText, subtitleStyle, hardsubCoverBox,
     isOverlayVisible,
     onLoadedMetadata, onPlay, onPause, onTogglePlayPause,
-    onSubtitleStyleChange
+    onSubtitleStyleChange,
+    onHardsubBoxChange
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const webglCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -258,6 +260,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         startY: number;
         startMargin: number;
     }>({ isDragging: false, startY: 0, startMargin: 0 }).current;
+
+    // State for hardsub overlay dragging/resizing
+    const [hardsubDragState, setHardsubDragState] = useState<{
+        isDragging: boolean;
+        dragType: 'move' | 'resize-top' | 'resize-bottom' | null;
+        startY: number;
+        startBox: BoundingBox | null;
+    }>({ isDragging: false, dragType: null, startY: 0, startBox: null });
+    
+    // State to track if hardsub overlay is selected
+    const [isHardsubSelected, setIsHardsubSelected] = useState(false);
 
     const glState = useRef<{
         gl: WebGLRenderingContext | null,
@@ -523,6 +536,63 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         setIsHoveringSubtitles(false);
     };    
 
+    // Hardsub overlay drag/resize handlers
+    const handleHardsubMouseDown = (e: React.MouseEvent, dragType: 'move' | 'resize-top' | 'resize-bottom') => {
+        if (!hardsubCoverBox || !onHardsubBoxChange) return;
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Select the overlay when clicked
+        setIsHardsubSelected(true);
+        
+        setHardsubDragState({
+            isDragging: true,
+            dragType,
+            startY: e.clientY,
+            startBox: { ...hardsubCoverBox }
+        });
+    };
+
+    const handleHardsubMouseMove = useCallback((e: MouseEvent) => {
+        if (!hardsubDragState.isDragging || !hardsubDragState.startBox || !onHardsubBoxChange || !containerRef.current) return;
+        
+        const rect = containerRef.current.getBoundingClientRect();
+        const deltaY = ((e.clientY - hardsubDragState.startY) / rect.height) * 100; // Convert to percentage
+        
+        let newBox = { ...hardsubDragState.startBox };
+        
+        if (hardsubDragState.dragType === 'move') {
+            // Move the entire box
+            newBox.y = Math.max(0, Math.min(100 - newBox.height, hardsubDragState.startBox.y + deltaY));
+        } else if (hardsubDragState.dragType === 'resize-top') {
+            // Resize from top
+            const newY = Math.max(0, Math.min(hardsubDragState.startBox.y + hardsubDragState.startBox.height - 5, hardsubDragState.startBox.y + deltaY));
+            const heightChange = hardsubDragState.startBox.y - newY;
+            newBox.y = newY;
+            newBox.height = Math.max(5, hardsubDragState.startBox.height + heightChange);
+        } else if (hardsubDragState.dragType === 'resize-bottom') {
+            // Resize from bottom
+            newBox.height = Math.max(5, Math.min(100 - hardsubDragState.startBox.y, hardsubDragState.startBox.height + deltaY));
+        }
+        
+        onHardsubBoxChange(newBox);
+    }, [hardsubDragState, onHardsubBoxChange]);
+
+    const handleHardsubMouseUp = useCallback(() => {
+        setHardsubDragState({ isDragging: false, dragType: null, startY: 0, startBox: null });
+    }, []);
+
+    useEffect(() => {
+        if (hardsubDragState.isDragging) {
+            window.addEventListener('mousemove', handleHardsubMouseMove);
+            window.addEventListener('mouseup', handleHardsubMouseUp);
+            return () => {
+                window.removeEventListener('mousemove', handleHardsubMouseMove);
+                window.removeEventListener('mouseup', handleHardsubMouseUp);
+            };
+        }
+    }, [hardsubDragState.isDragging, handleHardsubMouseMove, handleHardsubMouseUp]);
+
     const overlayStyle: React.CSSProperties = {
         position: 'absolute',
         top: 0,
@@ -534,7 +604,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     return (
         <div className="w-full h-full p-4 flex flex-col">
-            <div ref={containerRef} className="bg-black flex-grow flex items-center justify-center relative group">
+            <div 
+                ref={containerRef} 
+                className="bg-black flex-grow flex items-center justify-center relative group"
+                onClick={() => {
+                    // Deselect hardsub overlay when clicking outside of it
+                    if (isHardsubSelected) {
+                        setIsHardsubSelected(false);
+                    }
+                }}
+            >
                 {isLoading && <LoadingSpinner className="w-10 h-10" />}
                 
                 <video 
@@ -570,9 +649,54 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                 width: `${hardsubCoverBox.width}%`,
                                 height: `${hardsubCoverBox.height}%`,
                                 backdropFilter: 'blur(10px)',
-                                pointerEvents: 'none'
+                                pointerEvents: onHardsubBoxChange ? 'auto' : 'none',
+                                cursor: hardsubDragState.isDragging ? 'grabbing' : (onHardsubBoxChange ? 'grab' : 'default'),
+                                border: isHardsubSelected ? '2px solid #00CED1' : 'none', // Cyan border when selected
+                                zIndex: 10, // Higher z-index to be above subtitle interaction overlay
                             }}
-                        />
+                            onMouseDown={(e) => handleHardsubMouseDown(e, 'move')}
+                        >
+                            {/* Top resize handle - only show when selected */}
+                            {onHardsubBoxChange && isHardsubSelected && (
+                                <div
+                                    style={{
+                                        position: 'absolute',
+                                        top: '-6px',
+                                        left: '0',
+                                        right: '0',
+                                        height: '12px',
+                                        cursor: 'ns-resize',
+                                        backgroundColor: 'rgba(0, 206, 209, 0.5)', // Cyan color for resize handles
+                                        borderRadius: '6px',
+                                        zIndex: 11, // Higher than parent to ensure clickability
+                                    }}
+                                    onMouseDown={(e) => {
+                                        e.stopPropagation();
+                                        handleHardsubMouseDown(e, 'resize-top');
+                                    }}
+                                />
+                            )}
+                            {/* Bottom resize handle - only show when selected */}
+                            {onHardsubBoxChange && isHardsubSelected && (
+                                <div
+                                    style={{
+                                        position: 'absolute',
+                                        bottom: '-6px',
+                                        left: '0',
+                                        right: '0',
+                                        height: '12px',
+                                        cursor: 'ns-resize',
+                                        backgroundColor: 'rgba(0, 206, 209, 0.5)', // Cyan color for resize handles
+                                        borderRadius: '6px',
+                                        zIndex: 11, // Higher than parent to ensure clickability
+                                    }}
+                                    onMouseDown={(e) => {
+                                        e.stopPropagation();
+                                        handleHardsubMouseDown(e, 'resize-bottom');
+                                    }}
+                                />
+                            )}
+                        </div>
                     )}
 
                     {isOverlayVisible && subtitleStyle?.videoFrameUrl && (
@@ -595,6 +719,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                             ...overlayStyle,
                             pointerEvents: 'auto',
                             cursor: dragInfo.isDragging ? 'ns-resize' : isHoveringSubtitles ? 'ns-resize' : 'pointer',
+                            zIndex: 1, // Lower z-index than hardsub overlay
                         }}
                         onMouseDown={handleMouseDown}
                         onMouseMove={handleMouseMove}

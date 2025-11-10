@@ -141,20 +141,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
                                   <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                                 </label>
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                {(['x', 'y', 'width', 'height'] as const).map(field => (
-                                    <div key={field}>
-                                        <label className="block text-xs text-gray-400 mb-1 capitalize">{field} (%)</label>
-                                        <input
-                                            type="number"
-                                            step="0.1"
-                                            value={hardsubCoverBox[field].toFixed(1)}
-                                            onChange={e => handleHardsubBoxChange(field, parseFloat(e.target.value))}
-                                            className="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-2 py-1 text-sm focus:ring-1 focus:ring-indigo-500 outline-none"
-                                        />
-                                    </div>
-                                ))}
-                            </div>
+                            <p className="text-xs text-gray-500 italic">Điều chỉnh vị trí trực tiếp trên trình phát video</p>
                             <button onClick={handleRemoveHardsubBox} className="w-full text-xs text-red-400 hover:text-red-300 flex items-center justify-center space-x-1 pt-2">
                                 <TrashIcon className="w-3 h-3"/>
                                 <span>Xóa Vùng Che</span>

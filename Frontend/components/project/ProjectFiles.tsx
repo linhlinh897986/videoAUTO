@@ -4,7 +4,8 @@ import { Project, SrtFile, CustomStyle, KeywordPair, Character, ApiKey, Subtitle
 import { parseSrt, composeSrt, formatForGemini } from '../../services/srtParser';
 import { batchTranslateFiles, countTokensInText } from '../../services/geminiService';
 import { saveVideo, deleteVideo, getVideoUrl, getStoredFileInfo, generateMissingSrtsFromAsr, importVideosFromFolder } from '../../services/projectService';
-import { analyzeVideoForHardsubs, preloadAudioBuffer } from '../../services/videoAnalysisService';
+import { preloadAudioBuffer } from '../../services/videoAnalysisService';
+import { analyzeHardcodedSubtitles } from '../../services/ocrService';
 import {
   UploadIcon, TrashIcon, TranslateIcon, DownloadIcon,
   LoadingSpinner, DownloadAllIcon, ClipboardIcon, FilmIcon, ClapperboardEditLinear, AudioWaveIcon, SubtitlesIcon
@@ -160,13 +161,30 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
                 const hardsubPromise = project.autoAnalyzeHardsubs
                     ? (async () => {
                         setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Đang phân tích hardsub...' }));
-                        const hardsubBox = await analyzeVideoForHardsubs(videoUrl, (progress) => {
-                             setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: `Phân tích... ${(progress * 100).toFixed(0)}%` }));
-                        });
-                        if (hardsubBox) {
-                            onUpdateProject(project.id, p => ({
-                                files: p.files.map(f => f.id === videoInfo.id ? { ...f, hardsubCoverBox: hardsubBox } : f)
-                            }));
+                        try {
+                            const response = await analyzeHardcodedSubtitles(
+                                project.id,
+                                videoInfo.id,
+                                { numSamples: 20, language: 'chi_sim', maxWorkers: 8 }
+                            );
+                            
+                            if (response.status === 'error') {
+                                if (response.tesseract_error) {
+                                    setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi: Tesseract chưa được cài đặt' }));
+                                } else {
+                                    setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi phân tích hardsub' }));
+                                }
+                                return;
+                            }
+                            
+                            if (response.detected && response.bounding_box) {
+                                onUpdateProject(project.id, p => ({
+                                    files: p.files.map(f => f.id === videoInfo.id ? { ...f, hardsubCoverBox: response.bounding_box } : f)
+                                }));
+                            }
+                        } catch (error) {
+                            console.error('Error analyzing hardsubs:', error);
+                            setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi phân tích hardsub' }));
                         }
                       })()
                     : Promise.resolve();

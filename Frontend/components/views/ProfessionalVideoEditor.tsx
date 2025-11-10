@@ -11,7 +11,7 @@ import EditorControls from '../editor/EditorControls';
 import { useHistoryState } from '../../hooks/useHistoryState';
 import { generateBatchTTS } from '../../services/ttsService';
 import { DEFAULT_TTS_VOICE } from '../../constants';
-import Tesseract from 'tesseract.js';
+import { analyzeHardcodedSubtitles } from '../../services/ocrService';
 
 
 interface ProfessionalVideoEditorProps {
@@ -988,101 +988,63 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
 };
 
     const handleAnalyzeHardsubs = async () => {
-        if (!videoRef.current || videoDuration === 0) {
-            alert("Video chưa được tải xong. Vui lòng thử lại sau.");
-            return;
-        }
         setIsAnalyzingHardsubs(true);
+        setAnalysisProgress({ progress: 0, status: 'Đang gửi yêu cầu phân tích đến server...' });
 
-        const video = videoRef.current;
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-            setIsAnalyzingHardsubs(false);
-            return;
-        }
-        
-        let worker: Tesseract.Worker | null = null;
         try {
-            setAnalysisProgress({ progress: 0, status: 'Đang khởi tạo AI...' });
-            worker = await Tesseract.createWorker('chi_sim', 1, {
-                logger: m => {
-                    if (m.status === 'recognizing text') {
-                        setAnalysisProgress(prev => ({ ...prev, progress: m.progress }));
-                    }
+            setAnalysisProgress({ progress: 0.3, status: 'Đang phân tích video bằng OCR...' });
+            
+            const response = await analyzeHardcodedSubtitles(
+                project.id,
+                initialVideoFile.id,
+                {
+                    numSamples: 20,
+                    language: 'chi_sim',
+                    maxWorkers: 8,  // Use 8 parallel workers for faster processing
                 }
-            });
+            );
 
-            const allBBoxes: Tesseract.Bbox[] = [];
-            const NUM_SAMPLES = 20;
-            const sampleInterval = videoDuration / (NUM_SAMPLES + 1);
+            setAnalysisProgress({ progress: 1, status: 'Hoàn thành!' });
 
-            for (let i = 1; i <= NUM_SAMPLES; i++) {
-                const sampleTime = i * sampleInterval;
-                setAnalysisProgress({ progress: 0, status: `Đang quét khung hình ${i}/${NUM_SAMPLES}...` });
-
-                video.currentTime = sampleTime;
-                await new Promise(resolve => {
-                    const onSeeked = () => {
-                        video.removeEventListener('seeked', onSeeked);
-                        resolve(true);
-                    };
-                    video.addEventListener('seeked', onSeeked);
-                });
-                
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const { data } = await worker.recognize(canvas);
-                
-                data.lines.forEach(line => {
-                    if (line.confidence > 60 && line.bbox.y0 > canvas.height * 0.7) {
-                        allBBoxes.push(line.bbox);
-                    }
-                });
+            if (response.status === 'error') {
+                if (response.tesseract_error) {
+                    alert(`Lỗi cấu hình Tesseract OCR:\n\n${response.message}\n\nVui lòng cài đặt Tesseract và dữ liệu ngôn ngữ trên server:\nsudo apt-get install tesseract-ocr tesseract-ocr-chi-sim`);
+                } else {
+                    alert(`Lỗi khi phân tích: ${response.message}`);
+                }
+                return;
             }
 
-            if (allBBoxes.length > 0) {
-                // Find overall horizontal extent and the absolute bottom edge
-                let minX = canvas.width, maxX = 0, maxY = 0;
-                allBBoxes.forEach(box => {
-                    minX = Math.min(minX, box.x0);
-                    maxX = Math.max(maxX, box.x1);
-                    maxY = Math.max(maxY, box.y1);
-                });
-
-                // Calculate the median height of detected subtitle lines for a robust height estimate
-                const heights = allBBoxes.map(b => b.y1 - b.y0).sort((a, b) => a - b);
-                const medianHeight = heights[Math.floor(heights.length / 2)] || 20;
-
-                // Define the box anchored to the bottom, tall enough for two lines
-                const newMinY = maxY - (medianHeight * 2.5);
-
-                // Use smaller padding to create a tighter box
-                const PADDING_Y = 0.5; // smaller vertical padding
-                const PADDING_X = 1.0;
-
+            if (response.detected && response.bounding_box) {
                 const newCoverBox: BoundingBox = {
-                    x: Math.max(0, (minX / canvas.width) * 100 - PADDING_X),
-                    y: Math.max(0, (newMinY / canvas.height) * 100 - PADDING_Y),
-                    width: Math.min(100, ((maxX - minX) / canvas.width) * 100 + 2 * PADDING_X),
-                    height: Math.min(100, ((maxY - newMinY) / canvas.height) * 100 + 2 * PADDING_Y),
-                    enabled: true,
+                    x: response.bounding_box.x,
+                    y: response.bounding_box.y,
+                    width: response.bounding_box.width,
+                    height: response.bounding_box.height,
+                    enabled: response.bounding_box.enabled,
                 };
                 
                 const updateFn = (prevState: EditorState) => ({...prevState, hardsubCoverBox: newCoverBox });
                 setLiveEditorState(updateFn);
                 setEditorState(updateFn);
-                alert("Đã phát hiện và tạo vùng che hardsub!");
+                
+                let message = `Đã phát hiện và tạo vùng che hardsub! (Đã quét ${response.frames_analyzed} khung hình)`;
+                if (response.failed_frames && response.failed_frames > 0) {
+                    message += `\n\nLưu ý: ${response.failed_frames} khung hình bị lỗi OCR`;
+                }
+                alert(message);
             } else {
-                alert("Không phát hiện thấy hardsub ở cuối video.");
+                let message = "Không phát hiện thấy hardsub ở cuối video.";
+                if (response.failed_frames && response.failed_frames > 0) {
+                    message += `\n\nLưu ý: ${response.failed_frames}/${response.frames_analyzed} khung hình bị lỗi OCR`;
+                }
+                alert(message);
             }
 
         } catch (error) {
             console.error("Lỗi khi phân tích hardsub:", error);
             alert(`Đã xảy ra lỗi: ${error}`);
         } finally {
-            await worker?.terminate();
             setIsAnalyzingHardsubs(false);
             setAnalysisProgress({ progress: 0, status: '' });
         }
@@ -1315,6 +1277,11 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
                     onPlay={handlePlay}
                     onPause={handlePause}
                     onSubtitleStyleChange={handleSubtitleStyleChange}
+                    onHardsubBoxChange={(box: BoundingBox) => {
+                        const updateFn = (prevState: EditorState) => ({ ...prevState, hardsubCoverBox: box });
+                        setLiveEditorState(updateFn);
+                        setEditorState(updateFn);
+                    }}
                 />
             </div>
             <div onMouseDown={handleMouseDown('horizontal')} className="w-1.5 bg-gray-700 cursor-col-resize hover:bg-indigo-500 transition-colors flex-shrink-0 z-10" />
