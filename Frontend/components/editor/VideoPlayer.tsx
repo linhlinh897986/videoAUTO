@@ -652,6 +652,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                 pointerEvents: onHardsubBoxChange ? 'auto' : 'none',
                                 cursor: hardsubDragState.isDragging ? 'grabbing' : (onHardsubBoxChange ? 'grab' : 'default'),
                                 border: isHardsubSelected ? '2px solid #00CED1' : 'none', // Cyan border when selected
+                                zIndex: 10, // Higher z-index to be above subtitle interaction overlay
                             }}
                             onMouseDown={(e) => handleHardsubMouseDown(e, 'move')}
                         >
@@ -667,6 +668,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                         cursor: 'ns-resize',
                                         backgroundColor: 'rgba(0, 206, 209, 0.5)', // Cyan color for resize handles
                                         borderRadius: '6px',
+                                        zIndex: 11, // Higher than parent to ensure clickability
                                     }}
                                     onMouseDown={(e) => {
                                         e.stopPropagation();
@@ -686,6 +688,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                         cursor: 'ns-resize',
                                         backgroundColor: 'rgba(0, 206, 209, 0.5)', // Cyan color for resize handles
                                         borderRadius: '6px',
+                                        zIndex: 11, // Higher than parent to ensure clickability
                                     }}
                                     onMouseDown={(e) => {
                                         e.stopPropagation();
@@ -716,6 +719,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                             ...overlayStyle,
                             pointerEvents: 'auto',
                             cursor: dragInfo.isDragging ? 'ns-resize' : isHoveringSubtitles ? 'ns-resize' : 'pointer',
+                            zIndex: 1, // Lower z-index than hardsub overlay
                         }}
                         onMouseDown={handleMouseDown}
                         onMouseMove={handleMouseMove}
