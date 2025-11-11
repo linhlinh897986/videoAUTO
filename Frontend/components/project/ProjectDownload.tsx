@@ -119,18 +119,30 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
       );
 
       // Poll for download status
-      await downloadService.pollDownloadStatus(
+      const completedStatus = await downloadService.pollDownloadStatus(
         download_id,
         (status) => {
           setDownloadStatuses(prev => new Map(prev).set(video.id, status));
         }
       );
 
-      // Download completed - reload project to show new file
-      alert(`Video "${video.title}" đã được tải xuống và thêm vào tab Tệp Tin!`);
-      
-      // Trigger a project refresh by updating a timestamp
-      onUpdateProject(project.id, (p) => ({ ...p }));
+      // Download completed - add to project files
+      if (completedStatus.video_info) {
+        const newVideoFile = {
+          id: completedStatus.video_info.file_id,
+          name: completedStatus.video_info.filename,
+          type: 'video' as const,
+          segments: [],
+          masterVolumeDb: 0,
+        };
+
+        // Add the video to the project's files array
+        onUpdateProject(project.id, p => ({
+          files: [...p.files, newVideoFile]
+        }));
+
+        alert(`Video "${video.title}" đã được tải xuống và thêm vào tab Tệp Tin!`);
+      }
       
     } catch (error) {
       console.error('Download failed:', error);
