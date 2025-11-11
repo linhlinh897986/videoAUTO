@@ -141,7 +141,63 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
                                   <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                                 </label>
                             </div>
-                            <p className="text-xs text-gray-500 italic">Điều chỉnh vị trí trực tiếp trên trình phát video</p>
+                            
+                            {/* Position Controls */}
+                            <div className="space-y-2">
+                                <label className="block text-sm font-medium text-gray-300">Vị trí dọc (%)</label>
+                                <div className="flex items-center space-x-2">
+                                    <button 
+                                        onClick={() => handleHardsubBoxChange('y', Math.max(0, hardsubCoverBox.y - 1))}
+                                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded"
+                                    >
+                                        ↑
+                                    </button>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        step="0.5"
+                                        value={hardsubCoverBox.y.toFixed(1)}
+                                        onChange={e => handleHardsubBoxChange('y', parseFloat(e.target.value) || 0)}
+                                        className="flex-1 bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-1 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                    />
+                                    <button 
+                                        onClick={() => handleHardsubBoxChange('y', Math.min(100 - hardsubCoverBox.height, hardsubCoverBox.y + 1))}
+                                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded"
+                                    >
+                                        ↓
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            {/* Size Controls */}
+                            <div className="space-y-2">
+                                <label className="block text-sm font-medium text-gray-300">Chiều cao (%)</label>
+                                <div className="flex items-center space-x-2">
+                                    <button 
+                                        onClick={() => handleHardsubBoxChange('height', Math.max(5, hardsubCoverBox.height - 1))}
+                                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded"
+                                    >
+                                        −
+                                    </button>
+                                    <input
+                                        type="number"
+                                        min="5"
+                                        max="100"
+                                        step="0.5"
+                                        value={hardsubCoverBox.height.toFixed(1)}
+                                        onChange={e => handleHardsubBoxChange('height', parseFloat(e.target.value) || 5)}
+                                        className="flex-1 bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-1 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                    />
+                                    <button 
+                                        onClick={() => handleHardsubBoxChange('height', Math.min(100 - hardsubCoverBox.y, hardsubCoverBox.height + 1))}
+                                        className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded"
+                                    >
+                                        +
+                                    </button>
+                                </div>
+                            </div>
+                            
                             <button onClick={handleRemoveHardsubBox} className="w-full text-xs text-red-400 hover:text-red-300 flex items-center justify-center space-x-1 pt-2">
                                 <TrashIcon className="w-3 h-3"/>
                                 <span>Xóa Vùng Che</span>
