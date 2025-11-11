@@ -402,8 +402,8 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                   </div>
                   
                   {/* Thumbnail */}
-                  <div className="relative aspect-video bg-gray-700">
-                    {video.thumbnail && video.thumbnail !== "" ? (
+                  <div className="relative aspect-video bg-gray-700 flex items-center justify-center">
+                    {video.thumbnail && video.thumbnail !== "" && video.thumbnail !== "N/A" ? (
                       <img
                         src={video.thumbnail}
                         alt={video.title}
@@ -411,19 +411,32 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                         loading="lazy"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
+                          target.onerror = null; // Prevent infinite loop
                           target.style.display = 'none';
                           const parent = target.parentElement;
-                          if (parent) {
+                          if (parent && !parent.querySelector('.thumbnail-fallback')) {
                             const fallback = document.createElement('div');
-                            fallback.className = 'w-full h-full flex items-center justify-center text-gray-500 text-sm';
-                            fallback.textContent = 'Không có ảnh xem trước';
+                            fallback.className = 'thumbnail-fallback absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center';
+                            fallback.innerHTML = `
+                              <div>
+                                <svg class="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                                <div>Không có ảnh xem trước</div>
+                              </div>
+                            `;
                             parent.appendChild(fallback);
                           }
                         }}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
-                        Không có ảnh xem trước
+                      <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
+                        <div>
+                          <svg className="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          <div>Không có ảnh xem trước</div>
+                        </div>
                       </div>
                     )}
                   </div>
