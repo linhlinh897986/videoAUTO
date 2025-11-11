@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
@@ -299,7 +300,8 @@ async def _download_video_task(download_id: str, data: DownloadRequest) -> None:
         db.update_download_status(download_id, "downloading", progress=0)
         
         # Determine output path
-        data_dir = db._data_root / data.project_id / "files"
+        from app.core.database import db as db_instance
+        data_dir = db_instance._data_root / data.project_id / "files"
         data_dir.mkdir(parents=True, exist_ok=True)
         
         if data.type == "douyin":
