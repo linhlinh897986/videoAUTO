@@ -234,18 +234,42 @@ async def _scan_douyin_channel(url: str, max_videos: int) -> Dict[str, Any]:
 
 async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
     """Scan a YouTube channel using yt-dlp."""
-    yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
+    import platform
+    import shutil
+    
+    # Determine which yt-dlp to use based on platform
+    if platform.system() == "Windows":
+        yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
+        yt_dlp_cmd = str(yt_dlp_path)
+    else:
+        # On Linux/Mac, try to use yt-dlp from PATH
+        yt_dlp_cmd = shutil.which("yt-dlp")
+        if not yt_dlp_cmd:
+            # Try python -m yt_dlp as fallback
+            yt_dlp_cmd = None
     
     try:
         # Use yt-dlp to get channel info
-        result = subprocess.run(
-            [
-                str(yt_dlp_path),
+        if yt_dlp_cmd:
+            cmd = [
+                yt_dlp_cmd,
                 "--dump-json",
                 "--flat-playlist",
                 "--playlist-end", str(max_videos),
                 url,
-            ],
+            ]
+        else:
+            # Use python module as fallback
+            cmd = [
+                sys.executable, "-m", "yt_dlp",
+                "--dump-json",
+                "--flat-playlist",
+                "--playlist-end", str(max_videos),
+                url,
+            ]
+        
+        result = subprocess.run(
+            cmd,
             capture_output=True,
             text=True,
             timeout=120,
@@ -393,17 +417,40 @@ async def _download_douyin_video(url: str, output_dir: Path, download_id: str) -
 
 async def _download_youtube_video(url: str, output_dir: Path, download_id: str) -> Path:
     """Download a YouTube video using yt-dlp."""
-    yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
+    import platform
+    import shutil
+    
+    # Determine which yt-dlp to use based on platform
+    if platform.system() == "Windows":
+        yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
+        yt_dlp_cmd = str(yt_dlp_path)
+    else:
+        # On Linux/Mac, try to use yt-dlp from PATH
+        yt_dlp_cmd = shutil.which("yt-dlp")
+        if not yt_dlp_cmd:
+            # Try python -m yt_dlp as fallback
+            yt_dlp_cmd = None
     
     output_template = str(output_dir / f"youtube-{download_id}.%(ext)s")
     
-    result = subprocess.run(
-        [
-            str(yt_dlp_path),
+    if yt_dlp_cmd:
+        cmd = [
+            yt_dlp_cmd,
             "-f", "best[ext=mp4]/best",
             "-o", output_template,
             url,
-        ],
+        ]
+    else:
+        # Use python module as fallback
+        cmd = [
+            sys.executable, "-m", "yt_dlp",
+            "-f", "best[ext=mp4]/best",
+            "-o", output_template,
+            url,
+        ]
+    
+    result = subprocess.run(
+        cmd,
         capture_output=True,
         text=True,
         timeout=600,

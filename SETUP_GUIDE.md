@@ -43,7 +43,7 @@ Trong Colab notebook, chạy backend với ngrok:
 
 ```python
 # Install dependencies
-!pip install fastapi uvicorn pyngrok
+!pip install fastapi uvicorn pyngrok requests yt-dlp
 
 # Start backend with ngrok
 from pyngrok import ngrok
@@ -132,5 +132,8 @@ Hoặc set trong code trước khi build/run frontend.
 - **`VITE_API_BASE_URL` phải khớp** với địa chỉ backend thực tế
 - Với **ngrok**: URL có thể thay đổi mỗi lần khởi động lại, cần cập nhật lại
 - Douyin downloads yêu cầu script `douyin/main.py` hoạt động
-- YouTube downloads yêu cầu `yt-dlp.exe` trong thư mục Backend/app/download/
+- **YouTube downloads**:
+  - **Windows**: Sử dụng `yt-dlp.exe` trong thư mục `Backend/app/download/`
+  - **Linux/Colab**: Tự động sử dụng `yt-dlp` từ PATH hoặc Python module (cần cài `pip install yt-dlp`)
+  - Hệ thống tự động phát hiện platform và sử dụng phương thức phù hợp
 
