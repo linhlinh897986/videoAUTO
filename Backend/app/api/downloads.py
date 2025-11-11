@@ -96,7 +96,15 @@ async def add_channel_list(data: ChannelListCreate) -> ChannelItem:
         created_at=created_at,
     )
     
-    db.save_channel_list(channel.dict(), created_at)
+    # Convert Pydantic model to dict
+    try:
+        # Pydantic v2
+        channel_dict = channel.model_dump()
+    except AttributeError:
+        # Pydantic v1
+        channel_dict = channel.dict()
+    
+    db.save_channel_list(channel_dict, created_at)
     return channel
 
 
@@ -118,9 +126,9 @@ async def scan_channel(data: ScanRequest) -> ScanResponse:
         else:
             raise HTTPException(status_code=400, detail="Invalid type. Must be 'douyin' or 'youtube'")
         
-        # Save scanned videos to database
+        # Save scanned videos to database (videos are already dicts)
         for video in result["videos"]:
-            db.save_scanned_video(video.dict())
+            db.save_scanned_video(video)
         
         return ScanResponse(**result)
     except Exception as e:
