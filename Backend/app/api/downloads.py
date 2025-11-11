@@ -260,13 +260,14 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             yt_dlp_cmd = None
     
     try:
-        # Use yt-dlp to get channel info with flat-playlist and YouTube extractor args
+        # Use yt-dlp with --print to get video info efficiently
+        # Format: id\ttitle\tthumbnail_url (tab-separated)
         if yt_dlp_cmd:
             cmd = [
                 yt_dlp_cmd,
-                "--dump-json",
                 "--flat-playlist",
                 "--extractor-args", "youtube:tab=videos",
+                "--print", "%(id)s\t%(title)s\t%(thumbnails.-1.url)s\t%(uploader)s\t%(channel_id)s",
                 "--playlist-end", str(max_videos),
                 "--no-warnings",
                 url,
@@ -275,9 +276,9 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             # Use python module as fallback
             cmd = [
                 sys.executable, "-m", "yt_dlp",
-                "--dump-json",
                 "--flat-playlist",
                 "--extractor-args", "youtube:tab=videos",
+                "--print", "%(id)s\t%(title)s\t%(thumbnails.-1.url)s\t%(uploader)s\t%(channel_id)s",
                 "--playlist-end", str(max_videos),
                 "--no-warnings",
                 url,
@@ -293,7 +294,7 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
         if result.returncode != 0:
             raise RuntimeError(f"YouTube scan failed: {result.stderr}")
         
-        # Parse JSON output (one JSON object per line)
+        # Parse tab-separated output (one video per line)
         videos = []
         channel_info = {"name": "Unknown", "id": "", "total_videos": 0}
         
@@ -301,33 +302,34 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             if not line:
                 continue
             try:
-                video_data = json.loads(line)
-                # Ensure author is never None
-                author = video_data.get("uploader") or video_data.get("channel") or "Unknown"
-                
-                # Get best thumbnail - try multiple fields
-                thumbnail = (video_data.get("thumbnail") or 
-                           video_data.get("thumbnails", [{}])[-1].get("url") if isinstance(video_data.get("thumbnails"), list) and video_data.get("thumbnails") else "")
-                
-                videos.append({
-                    "id": video_data.get("id", ""),
-                    "title": video_data.get("title", "No title"),
-                    "description": video_data.get("description", ""),
-                    "thumbnail": thumbnail,
-                    "author": author,
-                    "created_time": video_data.get("upload_date", ""),
-                    "duration": str(video_data.get("duration", "")),
-                    "url": video_data.get("webpage_url") or video_data.get("url") or f"https://youtube.com/watch?v={video_data.get('id', '')}",
-                })
-                
-                # Update channel info from first video
-                if not channel_info["id"]:
-                    channel_info = {
-                        "name": video_data.get("uploader", video_data.get("channel", "Unknown")),
-                        "id": video_data.get("channel_id", ""),
-                        "total_videos": len(videos),
-                    }
-            except json.JSONDecodeError:
+                # Split by tab: id, title, thumbnail, uploader, channel_id
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    video_id = parts[0]
+                    title = parts[1]
+                    thumbnail = parts[2] if len(parts) > 2 and parts[2] != "NA" else ""
+                    author = parts[3] if len(parts) > 3 and parts[3] != "NA" else "Unknown"
+                    channel_id = parts[4] if len(parts) > 4 and parts[4] != "NA" else ""
+                    
+                    videos.append({
+                        "id": video_id,
+                        "title": title,
+                        "description": "",
+                        "thumbnail": thumbnail,
+                        "author": author,
+                        "created_time": "",
+                        "duration": "",
+                        "url": f"https://youtube.com/watch?v={video_id}",
+                    })
+                    
+                    # Update channel info from first video
+                    if not channel_info["id"] and author != "Unknown":
+                        channel_info = {
+                            "name": author,
+                            "id": channel_id,
+                            "total_videos": 0,
+                        }
+            except Exception:
                 continue
         
         return {
