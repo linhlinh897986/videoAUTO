@@ -13,9 +13,11 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   const [channels, setChannels] = useState<ChannelItem[]>([]);
   const [scannedVideos, setScannedVideos] = useState<ScannedVideo[]>([]);
   const [channelInfo, setChannelInfo] = useState<{ name: string; total_videos: number } | null>(null);
+  const [selectedVideos, setSelectedVideos] = useState<Set<string>>(new Set());
   
   const [scanUrl, setScanUrl] = useState('');
   const [scanType, setScanType] = useState<'douyin' | 'youtube'>('douyin');
+  const [maxVideos, setMaxVideos] = useState(100); // Increased default limit
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   
@@ -88,10 +90,13 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
     setScanError(null);
     setScannedVideos([]);
     setChannelInfo(null);
+    setSelectedVideos(new Set()); // Clear selections
 
     try {
-      const result = await downloadService.scanChannel(scanUrl, scanType, 30);
-      setScannedVideos(result.videos);
+      const result = await downloadService.scanChannel(scanUrl, scanType, maxVideos);
+      // Reverse to show newest first
+      const reversedVideos = [...result.videos].reverse();
+      setScannedVideos(reversedVideos);
       setChannelInfo({
         name: result.channel_info.name,
         total_videos: result.channel_info.total_videos,
@@ -115,6 +120,43 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
     setScanUrl(channel.url);
     setScanType(channel.type);
     await handleScanChannel();
+  };
+
+  const toggleVideoSelection = (videoId: string) => {
+    setSelectedVideos(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(videoId)) {
+        newSet.delete(videoId);
+      } else {
+        newSet.add(videoId);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedVideos.size === scannedVideos.length) {
+      // Deselect all
+      setSelectedVideos(new Set());
+    } else {
+      // Select all
+      setSelectedVideos(new Set(scannedVideos.map(v => v.id)));
+    }
+  };
+
+  const handleDownloadSelected = async () => {
+    const videosToDownload = scannedVideos.filter(v => selectedVideos.has(v.id));
+    if (videosToDownload.length === 0) {
+      alert('Vui lòng chọn ít nhất một video để tải xuống');
+      return;
+    }
+
+    // Download videos sequentially to avoid overwhelming the server
+    for (const video of videosToDownload) {
+      if (!downloadingVideos.has(video.id)) {
+        await handleDownloadVideo(video);
+      }
+    }
   };
 
   const handleDownloadVideo = async (video: ScannedVideo) => {
@@ -229,6 +271,15 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
           </select>
           
           <input
+            type="number"
+            value={maxVideos}
+            onChange={(e) => setMaxVideos(Math.max(1, Math.min(500, parseInt(e.target.value) || 100)))}
+            placeholder="Số video"
+            className="bg-gray-800 border border-gray-700 rounded px-3 py-2 w-24"
+            title="Số lượng video tối đa để quét (1-500)"
+          />
+          
+          <input
             type="text"
             value={scanUrl}
             onChange={(e) => setScanUrl(e.target.value)}
@@ -246,11 +297,33 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
           </button>
         </div>
 
-        {/* Channel Info */}
+        {/* Channel Info & Bulk Actions */}
         {channelInfo && (
           <div className="bg-gray-800 rounded p-3 mb-4">
-            <p className="font-semibold">{channelInfo.name}</p>
-            <p className="text-sm text-gray-400">Tổng số video: {channelInfo.total_videos}</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold">{channelInfo.name}</p>
+                <p className="text-sm text-gray-400">
+                  Tổng số video: {channelInfo.total_videos} | Đã quét: {scannedVideos.length} | Đã chọn: {selectedVideos.size}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={toggleSelectAll}
+                  className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm"
+                >
+                  {selectedVideos.size === scannedVideos.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                </button>
+                <button
+                  onClick={handleDownloadSelected}
+                  disabled={selectedVideos.size === 0}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 px-4 py-2 rounded text-sm flex items-center gap-2"
+                >
+                  <DownloadIcon className="w-4 h-4" />
+                  Tải đã chọn ({selectedVideos.size})
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -317,21 +390,40 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
           ) : scannedVideos.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {scannedVideos.map((video) => (
-                <div key={video.id} className="bg-gray-800 rounded-lg overflow-hidden hover:ring-2 ring-indigo-500 transition">
+                <div key={video.id} className="bg-gray-800 rounded-lg overflow-hidden hover:ring-2 ring-indigo-500 transition relative">
+                  {/* Checkbox */}
+                  <div className="absolute top-2 left-2 z-10">
+                    <input
+                      type="checkbox"
+                      checked={selectedVideos.has(video.id)}
+                      onChange={() => toggleVideoSelection(video.id)}
+                      className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                  </div>
+                  
                   {/* Thumbnail */}
                   <div className="relative aspect-video bg-gray-700">
-                    {video.thumbnail ? (
+                    {video.thumbnail && video.thumbnail !== "" ? (
                       <img
                         src={video.thumbnail}
                         alt={video.title}
                         className="w-full h-full object-cover"
+                        loading="lazy"
                         onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
+                          const target = e.target as HTMLImageElement;
+                          target.style.display = 'none';
+                          const parent = target.parentElement;
+                          if (parent) {
+                            const fallback = document.createElement('div');
+                            fallback.className = 'w-full h-full flex items-center justify-center text-gray-500 text-sm';
+                            fallback.textContent = 'Không có ảnh xem trước';
+                            parent.appendChild(fallback);
+                          }
                         }}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-500">
-                        No thumbnail
+                      <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
+                        Không có ảnh xem trước
                       </div>
                     )}
                   </div>
