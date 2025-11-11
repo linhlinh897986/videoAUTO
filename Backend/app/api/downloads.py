@@ -45,10 +45,10 @@ class ScanRequest(BaseModel):
 class ScannedVideo(BaseModel):
     id: str
     title: str
-    description: str
-    thumbnail: str
-    author: str
-    created_time: str
+    description: Optional[str] = ""  # Can be None
+    thumbnail: Optional[str] = ""  # Can be None
+    author: Optional[str] = ""  # Can be None
+    created_time: Optional[str] = ""  # Can be None
     duration: Optional[str] = None
     url: str
 
@@ -295,12 +295,15 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
                 continue
             try:
                 video_data = json.loads(line)
+                # Ensure author is never None
+                author = video_data.get("uploader") or video_data.get("channel") or "Unknown"
+                
                 videos.append({
                     "id": video_data.get("id", ""),
                     "title": video_data.get("title", "No title"),
                     "description": video_data.get("description", ""),
                     "thumbnail": video_data.get("thumbnail", ""),
-                    "author": video_data.get("uploader", video_data.get("channel", "")),
+                    "author": author,
                     "created_time": video_data.get("upload_date", ""),
                     "duration": str(video_data.get("duration", "")),
                     "url": video_data.get("url", f"https://youtube.com/watch?v={video_data.get('id', '')}"),
