@@ -2,7 +2,9 @@
 
 ## Để sử dụng tính năng tải video (To use the video download feature)
 
-### 1. Khởi động Backend Server (Start Backend Server)
+### Thiết lập Cục bộ (Local Setup)
+
+#### 1. Khởi động Backend Server (Start Backend Server)
 
 Mở terminal và chạy lệnh sau trong thư mục Backend:
 
@@ -16,7 +18,7 @@ Bạn sẽ thấy thông báo:
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
-### 2. Khởi động Frontend (Start Frontend)
+#### 2. Khởi động Frontend (Start Frontend)
 
 Mở terminal khác và chạy lệnh sau trong thư mục Frontend:
 
@@ -25,7 +27,7 @@ cd Frontend
 npm run dev
 ```
 
-### 3. Cấu hình Environment Variable (Configure Environment Variable)
+#### 3. Cấu hình Environment Variable (Configure Environment Variable)
 
 Đảm bảo file `.env` trong thư mục Frontend có:
 
@@ -33,7 +35,40 @@ npm run dev
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
-Hoặc nếu chạy trên máy khác, thay `localhost` bằng địa chỉ IP của máy chạy backend.
+### Thiết lập trên Google Colab với ngrok (Google Colab + ngrok Setup)
+
+#### 1. Khởi động Backend trên Colab
+
+Trong Colab notebook, chạy backend với ngrok:
+
+```python
+# Install dependencies
+!pip install fastapi uvicorn pyngrok
+
+# Start backend with ngrok
+from pyngrok import ngrok
+import subprocess
+
+# Start uvicorn in background
+backend_process = subprocess.Popen([
+    "python", "-m", "uvicorn", "main:app",
+    "--host", "0.0.0.0", "--port", "8000"
+])
+
+# Create ngrok tunnel
+public_url = ngrok.connect(8000)
+print(f"Backend URL: {public_url}")
+```
+
+#### 2. Cấu hình Frontend
+
+Sử dụng URL ngrok trong file `.env`:
+
+```
+VITE_API_BASE_URL=https://xxxx-xx-xxx-xxx-xx.ngrok-free.app
+```
+
+Hoặc set trong code trước khi build/run frontend.
 
 ### 4. Sử dụng (Usage)
 
@@ -51,18 +86,25 @@ Hoặc nếu chạy trên máy khác, thay `localhost` bằng địa chỉ IP c�
 **Nguyên nhân**: Backend server chưa chạy hoặc URL không đúng
 
 **Giải pháp**:
-1. Kiểm tra backend server đang chạy (xem bước 1)
-2. Kiểm tra `VITE_API_BASE_URL` trong file `.env`
-3. Thử truy cập http://localhost:8000/docs trong trình duyệt để xem API docs
+1. **Kiểm tra backend đang chạy**:
+   - Local: Kiểm tra terminal có thông báo "Uvicorn running"
+   - Colab: Kiểm tra ngrok tunnel còn hoạt động
+2. **Kiểm tra `VITE_API_BASE_URL`**:
+   - Local: Phải là `http://localhost:8000`
+   - Colab: Phải là URL ngrok (vd: `https://xxxx.ngrok-free.app`)
+3. **Thử truy cập API docs**:
+   - Local: http://localhost:8000/docs
+   - Colab: https://your-ngrok-url/docs
 
 ### Lỗi: "Unexpected token '<'"
 
 **Nguyên nhân**: Frontend đang kết nối đến sai địa chỉ hoặc backend trả về HTML thay vì JSON
 
 **Giải pháp**:
-1. Kiểm tra backend server đang chạy
+1. Kiểm tra `VITE_API_BASE_URL` đúng với backend URL
 2. Xóa cache của trình duyệt và reload trang
 3. Kiểm tra console của trình duyệt để xem URL nào đang được gọi
+4. Với ngrok: Đảm bảo không có trang warning của ngrok
 
 ### Lỗi: "Failed to fetch" hoặc "ERR_CONNECTION_REFUSED"
 
@@ -70,8 +112,11 @@ Hoặc nếu chạy trên máy khác, thay `localhost` bằng địa chỉ IP c�
 
 **Giải pháp**:
 1. Đảm bảo backend server đang chạy
-2. Kiểm tra firewall không chặn port 8000
-3. Nếu chạy trên máy khác, đảm bảo cấu hình network đúng
+2. Kiểm tra URL trong `VITE_API_BASE_URL` chính xác
+3. **Với Colab/ngrok**: 
+   - Ngrok tunnel có thể hết hạn (ngrok free có thời gian giới hạn)
+   - Tạo lại tunnel và cập nhật `VITE_API_BASE_URL`
+4. Kiểm tra firewall không chặn kết nối
 
 ## Yêu cầu hệ thống (System Requirements)
 
@@ -79,9 +124,13 @@ Hoặc nếu chạy trên máy khác, thay `localhost` bằng địa chỉ IP c�
 - Node.js 16+
 - Các dependencies được liệt kê trong `Backend/requirements.txt`
 - Các dependencies được liệt kê trong `Frontend/package.json`
+- (Optional) ngrok account cho Colab setup
 
-## Lưu ý (Notes)
+## Lưu ý quan trọng (Important Notes)
 
-- Backend phải chạy trước khi sử dụng tính năng download
+- **Backend phải chạy trước** khi sử dụng tính năng download
+- **`VITE_API_BASE_URL` phải khớp** với địa chỉ backend thực tế
+- Với **ngrok**: URL có thể thay đổi mỗi lần khởi động lại, cần cập nhật lại
 - Douyin downloads yêu cầu script `douyin/main.py` hoạt động
 - YouTube downloads yêu cầu `yt-dlp.exe` trong thư mục Backend/app/download/
+

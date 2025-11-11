@@ -43,7 +43,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
       console.error('Failed to load channels:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('404') || errorMessage.includes('Failed to fetch') || errorMessage.includes('fetch')) {
-        setBackendError('Không thể kết nối đến backend server. Vui lòng đảm bảo backend đang chạy (python -m uvicorn main:app --host 0.0.0.0 --port 8000)');
+        setBackendError('Không thể kết nối đến backend server. Vui lòng kiểm tra backend đang chạy và VITE_API_BASE_URL được cấu hình đúng.');
       }
     }
   };
@@ -104,7 +104,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
       
       // Show backend connection error if applicable
       if (errorMessage.includes('404') || errorMessage.includes('Failed to fetch') || errorMessage.includes('fetch')) {
-        setBackendError('Không thể kết nối đến backend server. Vui lòng đảm bảo backend đang chạy (python -m uvicorn main:app --host 0.0.0.0 --port 8000)');
+        setBackendError('Không thể kết nối đến backend server. Vui lòng kiểm tra backend đang chạy và VITE_API_BASE_URL được cấu hình đúng.');
       }
     } finally {
       setIsScanning(false);
