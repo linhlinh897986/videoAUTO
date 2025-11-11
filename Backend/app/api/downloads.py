@@ -178,14 +178,17 @@ async def get_download_history(project_id: Optional[str] = None) -> Dict[str, Li
 async def _scan_douyin_channel(url: str, max_videos: int) -> Dict[str, Any]:
     """Scan a Douyin channel using the douyin main.py script."""
     douyin_script = Path(__file__).parent.parent / "download" / "douyin" / "main.py"
+    douyin_dir = douyin_script.parent
     
     try:
         # Run douyin script to get channel info
+        # Change to douyin directory so it can find cookies.txt and other files in its directory
         result = subprocess.run(
             [sys.executable, str(douyin_script), "--url", url, "--recent-count", str(max_videos)],
             capture_output=True,
             text=True,
             timeout=120,
+            cwd=str(douyin_dir),  # Run in douyin directory for cookie access
         )
         
         if result.returncode != 0:
@@ -257,13 +260,14 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             yt_dlp_cmd = None
     
     try:
-        # Use yt-dlp to get channel info
+        # Use yt-dlp to get channel info with full metadata
         if yt_dlp_cmd:
             cmd = [
                 yt_dlp_cmd,
                 "--dump-json",
-                "--flat-playlist",
                 "--playlist-end", str(max_videos),
+                "--no-warnings",
+                "--skip-download",
                 url,
             ]
         else:
@@ -271,8 +275,9 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             cmd = [
                 sys.executable, "-m", "yt_dlp",
                 "--dump-json",
-                "--flat-playlist",
                 "--playlist-end", str(max_videos),
+                "--no-warnings",
+                "--skip-download",
                 url,
             ]
         
@@ -280,7 +285,7 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             cmd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=180,
         )
         
         if result.returncode != 0:
@@ -298,15 +303,19 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
                 # Ensure author is never None
                 author = video_data.get("uploader") or video_data.get("channel") or "Unknown"
                 
+                # Get best thumbnail - try multiple fields
+                thumbnail = (video_data.get("thumbnail") or 
+                           video_data.get("thumbnails", [{}])[-1].get("url") if isinstance(video_data.get("thumbnails"), list) and video_data.get("thumbnails") else "")
+                
                 videos.append({
                     "id": video_data.get("id", ""),
                     "title": video_data.get("title", "No title"),
                     "description": video_data.get("description", ""),
-                    "thumbnail": video_data.get("thumbnail", ""),
+                    "thumbnail": thumbnail,
                     "author": author,
                     "created_time": video_data.get("upload_date", ""),
                     "duration": str(video_data.get("duration", "")),
-                    "url": video_data.get("url", f"https://youtube.com/watch?v={video_data.get('id', '')}"),
+                    "url": video_data.get("webpage_url") or video_data.get("url") or f"https://youtube.com/watch?v={video_data.get('id', '')}",
                 })
                 
                 # Update channel info from first video
@@ -388,12 +397,14 @@ async def _download_douyin_video(url: str, output_dir: Path, download_id: str) -
     # Use requests to download the video directly
     # First, get the video URL from the douyin script
     douyin_script = Path(__file__).parent.parent / "download" / "douyin" / "main.py"
+    douyin_dir = douyin_script.parent
     
     result = subprocess.run(
         [sys.executable, str(douyin_script), "--url", url],
         capture_output=True,
         text=True,
         timeout=60,
+        cwd=str(douyin_dir),  # Run in douyin directory for cookie access
     )
     
     if result.returncode != 0:
