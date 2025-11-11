@@ -1,6 +1,7 @@
 // Download service for managing video downloads from Douyin and YouTube
 
-const API_BASE_URL = 'http://localhost:8000';
+const rawBase = import.meta.env.VITE_API_BASE_URL ?? '';
+const API_BASE_URL = rawBase ? rawBase.replace(/\/$/, '') : '';
 
 export interface ChannelItem {
     id: string;
