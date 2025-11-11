@@ -260,14 +260,15 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             yt_dlp_cmd = None
     
     try:
-        # Use yt-dlp to get channel info with full metadata
+        # Use yt-dlp to get channel info with flat-playlist and YouTube extractor args
         if yt_dlp_cmd:
             cmd = [
                 yt_dlp_cmd,
                 "--dump-json",
+                "--flat-playlist",
+                "--extractor-args", "youtube:tab=videos",
                 "--playlist-end", str(max_videos),
                 "--no-warnings",
-                "--skip-download",
                 url,
             ]
         else:
@@ -275,9 +276,10 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             cmd = [
                 sys.executable, "-m", "yt_dlp",
                 "--dump-json",
+                "--flat-playlist",
+                "--extractor-args", "youtube:tab=videos",
                 "--playlist-end", str(max_videos),
                 "--no-warnings",
-                "--skip-download",
                 url,
             ]
         
