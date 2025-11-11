@@ -3,6 +3,45 @@
 const rawBase = import.meta.env.VITE_API_BASE_URL ?? '';
 const API_BASE_URL = rawBase ? rawBase.replace(/\/$/, '') : '';
 
+/**
+ * Helper function for JSON fetch with proper error handling
+ */
+const jsonFetch = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...(options.headers || {}),
+        },
+    });
+
+    if (!response.ok) {
+        // Try to get error message from response
+        let message = `Request to ${path} failed with status ${response.status}`;
+        try {
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                const errorData = await response.json();
+                message = errorData.detail || errorData.message || message;
+            } else {
+                const textMessage = await response.text();
+                if (textMessage && !textMessage.startsWith('<!DOCTYPE') && !textMessage.startsWith('<html')) {
+                    message = textMessage;
+                }
+            }
+        } catch (e) {
+            // If we can't parse the error, use the default message
+        }
+        throw new Error(message);
+    }
+
+    if (response.status === 204) {
+        return undefined as T;
+    }
+
+    return (await response.json()) as T;
+};
+
 export interface ChannelItem {
     id: string;
     name: string;
@@ -49,11 +88,7 @@ export interface DownloadStatus {
  * Get all saved channel lists
  */
 export async function getChannelLists(): Promise<ChannelItem[]> {
-    const response = await fetch(`${API_BASE_URL}/downloads/channels`);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch channel lists: ${response.statusText}`);
-    }
-    const data = await response.json();
+    const data = await jsonFetch<{ channels: ChannelItem[] }>('/downloads/channels');
     return data.channels;
 }
 
@@ -61,56 +96,33 @@ export async function getChannelLists(): Promise<ChannelItem[]> {
  * Add a new channel to the saved list
  */
 export async function addChannelList(name: string, url: string, type: 'douyin' | 'youtube'): Promise<ChannelItem> {
-    const response = await fetch(`${API_BASE_URL}/downloads/channels`, {
+    return jsonFetch<ChannelItem>('/downloads/channels', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ name, url, type }),
     });
-    
-    if (!response.ok) {
-        throw new Error(`Failed to add channel: ${response.statusText}`);
-    }
-    
-    return response.json();
 }
 
 /**
  * Delete a channel from the saved list
  */
 export async function deleteChannelList(channelId: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/downloads/channels/${channelId}`, {
+    await jsonFetch<void>(`/downloads/channels/${channelId}`, {
         method: 'DELETE',
     });
-    
-    if (!response.ok) {
-        throw new Error(`Failed to delete channel: ${response.statusText}`);
-    }
 }
 
 /**
  * Scan a channel/user URL and get video list
  */
 export async function scanChannel(url: string, type: 'douyin' | 'youtube', maxVideos: number = 30): Promise<ScanResult> {
-    const response = await fetch(`${API_BASE_URL}/downloads/scan`, {
+    return jsonFetch<ScanResult>('/downloads/scan', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
             url,
             type,
             max_videos: maxVideos,
         }),
     });
-    
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || `Failed to scan channel: ${response.statusText}`);
-    }
-    
-    return response.json();
 }
 
 /**
@@ -122,11 +134,8 @@ export async function downloadVideo(
     projectId: string,
     type: 'douyin' | 'youtube'
 ): Promise<{ status: string; download_id: string }> {
-    const response = await fetch(`${API_BASE_URL}/downloads/download`, {
+    return jsonFetch<{ status: string; download_id: string }>('/downloads/download', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
             video_id: videoId,
             url,
@@ -134,26 +143,13 @@ export async function downloadVideo(
             type,
         }),
     });
-    
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || `Failed to start download: ${response.statusText}`);
-    }
-    
-    return response.json();
 }
 
 /**
  * Get download status
  */
 export async function getDownloadStatus(downloadId: string): Promise<DownloadStatus> {
-    const response = await fetch(`${API_BASE_URL}/downloads/download/${downloadId}`);
-    
-    if (!response.ok) {
-        throw new Error(`Failed to get download status: ${response.statusText}`);
-    }
-    
-    return response.json();
+    return jsonFetch<DownloadStatus>(`/downloads/download/${downloadId}`);
 }
 
 /**
@@ -161,16 +157,10 @@ export async function getDownloadStatus(downloadId: string): Promise<DownloadSta
  */
 export async function getDownloadHistory(projectId?: string): Promise<DownloadStatus[]> {
     const url = projectId 
-        ? `${API_BASE_URL}/downloads/history?project_id=${projectId}`
-        : `${API_BASE_URL}/downloads/history`;
+        ? `/downloads/history?project_id=${projectId}`
+        : `/downloads/history`;
     
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-        throw new Error(`Failed to get download history: ${response.statusText}`);
-    }
-    
-    const data = await response.json();
+    const data = await jsonFetch<{ downloads: DownloadStatus[] }>(url);
     return data.downloads;
 }
 
