@@ -59,6 +59,7 @@ export interface ScannedVideo {
     created_time: string;
     duration?: string;
     url: string;
+    downloaded?: boolean;  // Track if video has been downloaded
 }
 
 export interface ScanResult {
@@ -162,6 +163,19 @@ export async function getDownloadHistory(projectId?: string): Promise<DownloadSt
     
     const data = await jsonFetch<{ downloads: DownloadStatus[] }>(url);
     return data.downloads;
+}
+
+/**
+ * Mark videos as downloaded or unmark them
+ */
+export async function markVideosDownloaded(videoIds: string[], downloaded: boolean): Promise<{ status: string; marked: number; downloaded: boolean }> {
+    return jsonFetch<{ status: string; marked: number; downloaded: boolean }>('/downloads/mark-downloaded', {
+        method: 'POST',
+        body: JSON.stringify({
+            video_ids: videoIds,
+            downloaded: downloaded,
+        }),
+    });
 }
 
 /**

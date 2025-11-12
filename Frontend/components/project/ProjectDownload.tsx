@@ -30,6 +30,10 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   const [newChannelType, setNewChannelType] = useState<'douyin' | 'youtube' | 'bilibili'>('douyin');
   
   const [backendError, setBackendError] = useState<string | null>(null);
+  
+  // Drag selection state
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStartId, setDragStartId] = useState<string | null>(null);
 
   // Load saved channels on mount
   useEffect(() => {
@@ -94,9 +98,8 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
 
     try {
       const result = await downloadService.scanChannel(scanUrl, scanType, maxVideos);
-      // Reverse to show newest first
-      const reversedVideos = [...result.videos].reverse();
-      setScannedVideos(reversedVideos);
+      // Videos should already be in newest-to-oldest order from the API
+      setScannedVideos(result.videos);
       setChannelInfo({
         name: result.channel_info.name,
         total_videos: result.channel_info.total_videos,
@@ -143,11 +146,90 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
       setSelectedVideos(new Set(scannedVideos.map(v => v.id)));
     }
   };
+  
+  // Drag selection handlers
+  const handleMouseDown = (videoId: string, e: React.MouseEvent) => {
+    // Don't start drag if clicking on checkbox or button
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('button')) {
+      return;
+    }
+    
+    setIsDragging(true);
+    setDragStartId(videoId);
+    
+    // Toggle the clicked video
+    setSelectedVideos(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(videoId)) {
+        newSet.delete(videoId);
+      } else {
+        newSet.add(videoId);
+      }
+      return newSet;
+    });
+  };
+  
+  const handleMouseEnter = (videoId: string) => {
+    if (isDragging && dragStartId) {
+      // Find the range between dragStartId and current videoId
+      const startIndex = scannedVideos.findIndex(v => v.id === dragStartId);
+      const endIndex = scannedVideos.findIndex(v => v.id === videoId);
+      
+      if (startIndex !== -1 && endIndex !== -1) {
+        const minIndex = Math.min(startIndex, endIndex);
+        const maxIndex = Math.max(startIndex, endIndex);
+        
+        // Select all videos in the range
+        const videosInRange = scannedVideos.slice(minIndex, maxIndex + 1).map(v => v.id);
+        setSelectedVideos(new Set(videosInRange));
+      }
+    }
+  };
+  
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    setDragStartId(null);
+  };
+  
+  // Add global mouseup listener
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      setIsDragging(false);
+      setDragStartId(null);
+    };
+    
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, []);
+
+  const handleMarkSelectedAsDownloaded = async (downloaded: boolean) => {
+    if (selectedVideos.size === 0) {
+      alert('Vui lòng chọn ít nhất một video');
+      return;
+    }
+
+    try {
+      const videoIds = Array.from(selectedVideos);
+      await downloadService.markVideosDownloaded(videoIds, downloaded);
+      
+      // Update local state
+      setScannedVideos(prev => 
+        prev.map(v => selectedVideos.has(v.id) ? { ...v, downloaded } : v)
+      );
+      
+      const action = downloaded ? 'đã tải' : 'chưa tải';
+      alert(`Đã đánh dấu ${videoIds.length} video là ${action}`);
+    } catch (error) {
+      console.error('Failed to mark videos:', error);
+      alert(`Không thể đánh dấu video: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   const handleDownloadSelected = async () => {
-    const videosToDownload = scannedVideos.filter(v => selectedVideos.has(v.id));
+    const videosToDownload = scannedVideos.filter(v => selectedVideos.has(v.id) && !v.downloaded);
     if (videosToDownload.length === 0) {
-      alert('Vui lòng chọn ít nhất một video để tải xuống');
+      alert('Vui lòng chọn ít nhất một video chưa tải để tải xuống');
       return;
     }
 
@@ -162,6 +244,12 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   const handleDownloadVideo = async (video: ScannedVideo) => {
     if (downloadingVideos.has(video.id)) {
       return; // Already downloading
+    }
+    
+    // Skip if already downloaded
+    if (video.downloaded) {
+      alert(`Video "${video.title}" đã được tải trước đó`);
+      return;
     }
 
     try {
@@ -197,6 +285,11 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
           files: [...p.files, newVideoFile]
         }));
 
+        // Mark video as downloaded in local state
+        setScannedVideos(prev => 
+          prev.map(v => v.id === video.id ? { ...v, downloaded: true } : v)
+        );
+
         alert(`Video "${video.title}" đã được tải xuống và thêm vào tab Tệp Tin!`);
       }
       
@@ -213,6 +306,9 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   };
 
   const getDownloadButtonText = (video: ScannedVideo): string => {
+    if (video.downloaded) {
+      return 'Đã tải';
+    }
     if (downloadingVideos.has(video.id)) {
       const status = downloadStatuses.get(video.id);
       if (status) {
@@ -301,7 +397,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
         {/* Channel Info & Bulk Actions */}
         {channelInfo && (
           <div className="bg-gray-800 rounded p-3 mb-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="font-semibold">{channelInfo.name}</p>
                 <p className="text-sm text-gray-400">
@@ -324,6 +420,25 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                   Tải đã chọn ({selectedVideos.size})
                 </button>
               </div>
+            </div>
+            
+            {/* Mark as Downloaded Controls */}
+            <div className="flex items-center gap-2 pt-3 border-t border-gray-700">
+              <span className="text-sm text-gray-400">Đánh dấu đã chọn:</span>
+              <button
+                onClick={() => handleMarkSelectedAsDownloaded(true)}
+                disabled={selectedVideos.size === 0}
+                className="bg-green-700 hover:bg-green-600 disabled:bg-gray-600 px-3 py-1 rounded text-sm"
+              >
+                Đã tải
+              </button>
+              <button
+                onClick={() => handleMarkSelectedAsDownloaded(false)}
+                disabled={selectedVideos.size === 0}
+                className="bg-red-700 hover:bg-red-600 disabled:bg-gray-600 px-3 py-1 rounded text-sm"
+              >
+                Bỏ dấu
+              </button>
             </div>
           </div>
         )}
@@ -389,85 +504,111 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
               <p className="ml-3">Đang quét kênh...</p>
             </div>
           ) : scannedVideos.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {scannedVideos.map((video) => (
-                <div key={video.id} className="bg-gray-800 rounded-lg overflow-hidden hover:ring-2 ring-indigo-500 transition relative">
-                  {/* Checkbox */}
-                  <div className="absolute top-2 left-2 z-10">
-                    <input
-                      type="checkbox"
-                      checked={selectedVideos.has(video.id)}
-                      onChange={() => toggleVideoSelection(video.id)}
-                      className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                    />
-                  </div>
-                  
-                  {/* Thumbnail */}
-                  <div className="relative aspect-video bg-gray-700 flex items-center justify-center">
-                    {video.thumbnail && video.thumbnail !== "" && video.thumbnail !== "N/A" ? (
-                      <img
-                        src={video.thumbnail}
-                        alt={video.title}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.onerror = null; // Prevent infinite loop
-                          target.style.display = 'none';
-                          const parent = target.parentElement;
-                          if (parent && !parent.querySelector('.thumbnail-fallback')) {
-                            const fallback = document.createElement('div');
-                            fallback.className = 'thumbnail-fallback absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center';
-                            fallback.innerHTML = `
-                              <div>
-                                <svg class="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                </svg>
-                                <div>Không có ảnh xem trước</div>
-                              </div>
-                            `;
-                            parent.appendChild(fallback);
-                          }
-                        }}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" style={{ userSelect: isDragging ? 'none' : 'auto' }}>
+              {scannedVideos.map((video) => {
+                const isSelected = selectedVideos.has(video.id);
+                const isDownloaded = video.downloaded || false;
+                
+                // Determine background color based on status
+                let bgColor = 'bg-gray-800'; // default
+                if (isSelected) {
+                  bgColor = 'bg-green-900/40'; // green for selected/checked
+                } else if (isDownloaded) {
+                  bgColor = 'bg-yellow-900/40'; // yellow for downloaded
+                }
+                
+                return (
+                  <div 
+                    key={video.id} 
+                    className={`${bgColor} rounded-lg overflow-hidden hover:ring-2 ring-indigo-500 transition relative select-none`}
+                    onMouseDown={(e) => handleMouseDown(video.id, e)}
+                    onMouseEnter={() => handleMouseEnter(video.id)}
+                    onMouseUp={handleMouseUp}
+                  >
+                    {/* Checkbox */}
+                    <div className="absolute top-2 left-2 z-10">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleVideoSelection(video.id)}
+                        className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                       />
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
-                        <div>
-                          <svg className="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                          <div>Không có ảnh xem trước</div>
-                        </div>
+                    </div>
+                    
+                    {/* Downloaded Badge */}
+                    {isDownloaded && (
+                      <div className="absolute top-2 right-2 z-10 bg-yellow-500 text-yellow-900 text-xs font-bold px-2 py-1 rounded">
+                        Đã tải
                       </div>
                     )}
-                  </div>
-                  
-                  {/* Video Info */}
-                  <div className="p-3">
-                    <h4 className="font-medium line-clamp-2 mb-1" title={video.title}>
-                      {video.title || 'No title'}
-                    </h4>
-                    <p className="text-sm text-gray-400 mb-2">{video.author}</p>
-                    {video.created_time && (
-                      <p className="text-xs text-gray-500 mb-2">{video.created_time}</p>
-                    )}
                     
-                    {/* Download Button */}
-                    <button
-                      onClick={() => handleDownloadVideo(video)}
-                      disabled={downloadingVideos.has(video.id)}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 px-3 py-2 rounded text-sm flex items-center justify-center gap-2"
-                    >
-                      {downloadingVideos.has(video.id) ? (
-                        <LoadingSpinner className="w-4 h-4" />
+                    {/* Thumbnail */}
+                    <div className="relative aspect-video bg-gray-700 flex items-center justify-center">
+                      {video.thumbnail && video.thumbnail !== "" && video.thumbnail !== "N/A" ? (
+                        <img
+                          src={video.thumbnail}
+                          alt={video.title}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            target.onerror = null; // Prevent infinite loop
+                            target.style.display = 'none';
+                            const parent = target.parentElement;
+                            if (parent && !parent.querySelector('.thumbnail-fallback')) {
+                              const fallback = document.createElement('div');
+                              fallback.className = 'thumbnail-fallback absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center';
+                              fallback.innerHTML = `
+                                <div>
+                                  <svg class="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                  </svg>
+                                  <div>Không có ảnh xem trước</div>
+                                </div>
+                              `;
+                              parent.appendChild(fallback);
+                            }
+                          }}
+                        />
                       ) : (
-                        <DownloadIcon className="w-4 h-4" />
+                        <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
+                          <div>
+                            <svg className="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            <div>Không có ảnh xem trước</div>
+                          </div>
+                        </div>
                       )}
-                      {getDownloadButtonText(video)}
-                    </button>
+                    </div>
+                    
+                    {/* Video Info */}
+                    <div className="p-3">
+                      <h4 className="font-medium line-clamp-2 mb-1" title={video.title}>
+                        {video.title || 'No title'}
+                      </h4>
+                      <p className="text-sm text-gray-400 mb-2">{video.author}</p>
+                      {video.created_time && (
+                        <p className="text-xs text-gray-500 mb-2">{video.created_time}</p>
+                      )}
+                      
+                      {/* Download Button */}
+                      <button
+                        onClick={() => handleDownloadVideo(video)}
+                        disabled={downloadingVideos.has(video.id) || video.downloaded}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 px-3 py-2 rounded text-sm flex items-center justify-center gap-2"
+                      >
+                        {downloadingVideos.has(video.id) ? (
+                          <LoadingSpinner className="w-4 h-4" />
+                        ) : (
+                          <DownloadIcon className="w-4 h-4" />
+                        )}
+                        {getDownloadButtonText(video)}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500">
