@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import datetime as dt
 import json
 import os
@@ -38,8 +39,9 @@ class ChannelListResponse(BaseModel):
 
 class ScanRequest(BaseModel):
     url: str
-    type: str  # 'douyin', 'youtube', or 'bilibili'
-    max_videos: int = 30
+    type: str  # 'douyin' or 'other' (for youtube/bilibili/etc)
+    mode: str = "fast"  # 'fast' or 'detailed'
+    max_videos: int = 10  # For fast mode preview
 
 
 class ScannedVideo(BaseModel):
@@ -51,6 +53,8 @@ class ScannedVideo(BaseModel):
     created_time: Optional[str] = ""  # Can be None
     duration: Optional[str] = None
     url: str
+    view_count: Optional[int] = None  # View count for detailed mode
+    tags: Optional[List[str]] = None  # Tags for detailed mode
     downloaded: bool = False  # Track if video has been downloaded
 
 
@@ -58,6 +62,8 @@ class ScanResponse(BaseModel):
     status: str
     videos: List[ScannedVideo]
     channel_info: Dict[str, Any]
+    mode: str  # 'fast' or 'detailed'
+    total_channel_videos: Optional[int] = None  # Total videos in channel
 
 
 class DownloadRequest(BaseModel):
@@ -123,22 +129,45 @@ async def delete_channel_list(channel_id: str) -> Dict[str, str]:
 
 @router.post("/scan", response_model=ScanResponse)
 async def scan_channel(data: ScanRequest) -> ScanResponse:
-    """Scan a channel/user URL and return video information."""
+    """Scan a channel/user URL and return video information.
+    
+    Two modes:
+    - fast: Quick scan using --flat-playlist (limit 10 videos by default)
+    - detailed: Full metadata fetch with concurrent threads (10 threads)
+    
+    Smart logic:
+    - If fast mode returns all new videos (not in DB), automatically trigger full channel scan
+    - Then detailed mode can be called to fetch full metadata for selected videos
+    """
     try:
         if data.type == "douyin":
             result = await _scan_douyin_channel(data.url, data.max_videos)
-        elif data.type == "youtube":
-            result = await _scan_youtube_channel(data.url, data.max_videos)
-        elif data.type == "bilibili":
-            result = await _scan_bilibili_channel(data.url, data.max_videos)
+            result["mode"] = data.mode
         else:
-            raise HTTPException(status_code=400, detail="Invalid type. Must be 'douyin', 'youtube', or 'bilibili'")
+            # Unified handling for YouTube, Bilibili and other yt-dlp supported platforms
+            if data.mode == "fast":
+                result = await _scan_ytdlp_fast(data.url, data.max_videos)
+            else:  # detailed mode
+                result = await _scan_ytdlp_detailed(data.url, data.max_videos)
         
         # Save scanned videos to database and check download status
+        new_video_count = 0
         for video in result["videos"]:
+            existing = db.get_scanned_video(video["id"])
+            if not existing:
+                new_video_count += 1
             db.save_scanned_video(video)
             # Check if this video was previously downloaded
             video["downloaded"] = db.get_video_download_status(video["id"])
+        
+        # Smart logic: if fast mode and all videos are new, trigger full scan
+        if data.mode == "fast" and new_video_count == len(result["videos"]) and new_video_count >= data.max_videos:
+            # All preview videos are new, fetch full channel list
+            full_result = await _scan_ytdlp_fast(data.url, max_videos=None)  # No limit
+            for video in full_result["videos"]:
+                db.save_scanned_video(video)
+                video["downloaded"] = db.get_video_download_status(video["id"])
+            result = full_result
         
         return ScanResponse(**result)
     except Exception as e:
@@ -269,51 +298,62 @@ async def _scan_douyin_channel(url: str, max_videos: int) -> Dict[str, Any]:
             "status": "success",
             "videos": videos,
             "channel_info": channel_info,
+            "mode": "fast",  # Douyin always uses its own mode
         }
     except Exception as e:
         raise RuntimeError(f"Failed to scan Douyin channel: {str(e)}")
 
 
-async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
-    """Scan a YouTube channel using yt-dlp."""
+def _get_ytdlp_command() -> Optional[str]:
+    """Get the yt-dlp command based on platform."""
     import platform
     import shutil
     
-    # Determine which yt-dlp to use based on platform
     if platform.system() == "Windows":
         yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
-        yt_dlp_cmd = str(yt_dlp_path)
-    else:
-        # On Linux/Mac, try to use yt-dlp from PATH
-        yt_dlp_cmd = shutil.which("yt-dlp")
-        if not yt_dlp_cmd:
-            # Try python -m yt_dlp as fallback
-            yt_dlp_cmd = None
+        if yt_dlp_path.exists():
+            return str(yt_dlp_path)
+    
+    # On Linux/Mac, try to use yt-dlp from PATH
+    yt_dlp_cmd = shutil.which("yt-dlp")
+    return yt_dlp_cmd
+
+
+async def _scan_ytdlp_fast(url: str, max_videos: Optional[int] = 10) -> Dict[str, Any]:
+    """Fast scan using yt-dlp with --flat-playlist.
+    
+    This retrieves basic information (ID, title, URL) quickly without accessing each video.
+    Suitable for YouTube, Bilibili, and other yt-dlp supported platforms.
+    
+    Args:
+        url: Channel/playlist URL
+        max_videos: Maximum number of videos to fetch (None for all)
+    """
+    yt_dlp_cmd = _get_ytdlp_command()
     
     try:
-        # Use yt-dlp with --print to get video info efficiently
-        # Format: id\ttitle\tthumbnail_url (tab-separated)
+        # Build command for fast scanning
         if yt_dlp_cmd:
             cmd = [
                 yt_dlp_cmd,
                 "--flat-playlist",
-                "--extractor-args", "youtube:tab=videos",
-                "--print", "%(id)s\t%(title)s\t%(thumbnails.-1.url)s\t%(uploader)s\t%(channel_id)s",
-                "--playlist-end", str(max_videos),
+                "--print", "%(id)s\t%(title)s\t%(url)s\t%(uploader)s\t%(channel_id)s",
                 "--no-warnings",
-                url,
             ]
         else:
             # Use python module as fallback
             cmd = [
                 sys.executable, "-m", "yt_dlp",
                 "--flat-playlist",
-                "--extractor-args", "youtube:tab=videos",
-                "--print", "%(id)s\t%(title)s\t%(thumbnails.-1.url)s\t%(uploader)s\t%(channel_id)s",
-                "--playlist-end", str(max_videos),
+                "--print", "%(id)s\t%(title)s\t%(url)s\t%(uploader)s\t%(channel_id)s",
                 "--no-warnings",
-                url,
             ]
+        
+        # Add playlist limit if specified
+        if max_videos is not None:
+            cmd.extend(["--playlist-end", str(max_videos)])
+        
+        cmd.append(url)
         
         result = subprocess.run(
             cmd,
@@ -323,7 +363,7 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
         )
         
         if result.returncode != 0:
-            raise RuntimeError(f"YouTube scan failed: {result.stderr}")
+            raise RuntimeError(f"yt-dlp scan failed: {result.stderr}")
         
         # Parse tab-separated output (one video per line)
         videos = []
@@ -333,12 +373,12 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             if not line:
                 continue
             try:
-                # Split by tab: id, title, thumbnail, uploader, channel_id
+                # Split by tab: id, title, url, uploader, channel_id
                 parts = line.split("\t")
                 if len(parts) >= 3:
                     video_id = parts[0]
                     title = parts[1]
-                    thumbnail = parts[2] if len(parts) > 2 and parts[2] != "NA" else ""
+                    video_url = parts[2] if len(parts) > 2 and parts[2] != "NA" else ""
                     author = parts[3] if len(parts) > 3 and parts[3] != "NA" else "Unknown"
                     channel_id = parts[4] if len(parts) > 4 and parts[4] != "NA" else ""
                     
@@ -346,11 +386,11 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
                         "id": video_id,
                         "title": title,
                         "description": "",
-                        "thumbnail": thumbnail,
+                        "thumbnail": "",
                         "author": author,
                         "created_time": "",
                         "duration": "",
-                        "url": f"https://youtube.com/watch?v={video_id}",
+                        "url": video_url,
                     })
                     
                     # Update channel info from first video
@@ -367,114 +407,155 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
             "status": "success",
             "videos": videos,
             "channel_info": channel_info,
+            "mode": "fast",
         }
     except Exception as e:
-        raise RuntimeError(f"Failed to scan YouTube channel: {str(e)}")
+        raise RuntimeError(f"Failed to scan with yt-dlp (fast mode): {str(e)}")
 
 
-async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
-    """Scan a Bilibili channel using yt-dlp."""
-    import platform
-    import shutil
+async def _fetch_video_details(video_id: str, platform_url: str) -> Dict[str, Any]:
+    """Fetch detailed information for a single video using yt-dlp.
     
-    # Determine which yt-dlp to use based on platform
-    if platform.system() == "Windows":
-        yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
-        yt_dlp_cmd = str(yt_dlp_path)
-    else:
-        # On Linux/Mac, try to use yt-dlp from PATH
-        yt_dlp_cmd = shutil.which("yt-dlp")
-        if not yt_dlp_cmd:
-            # Try python -m yt_dlp as fallback
-            yt_dlp_cmd = None
+    This is called by the detailed mode to get complete metadata.
+    """
+    yt_dlp_cmd = _get_ytdlp_command()
     
     try:
-        # Use yt-dlp with JSON output for more reliable parsing
-        # Add user-agent and referer to avoid 352 rejection
+        # Build command for detailed video info
         if yt_dlp_cmd:
             cmd = [
                 yt_dlp_cmd,
-                "--flat-playlist",
                 "--dump-single-json",
-                "--playlist-end", str(max_videos),
                 "--no-warnings",
-                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "--referer", "https://www.bilibili.com/",
-                "--extractor-args", "bilibili:getcomments=False",
-                url,
+                platform_url,
             ]
         else:
-            # Use python module as fallback
             cmd = [
                 sys.executable, "-m", "yt_dlp",
-                "--flat-playlist",
                 "--dump-single-json",
-                "--playlist-end", str(max_videos),
                 "--no-warnings",
-                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "--referer", "https://www.bilibili.com/",
-                "--extractor-args", "bilibili:getcomments=False",
-                url,
+                platform_url,
             ]
         
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=60,
         )
         
         if result.returncode != 0:
-            raise RuntimeError(f"Bilibili scan failed: {result.stderr}")
+            # If failed, return basic info
+            return {
+                "id": video_id,
+                "title": "Error fetching details",
+                "description": "",
+                "thumbnail": "",
+                "author": "",
+                "created_time": "",
+                "duration": "",
+                "url": platform_url,
+                "view_count": None,
+                "tags": None,
+            }
         
         # Parse JSON output
         data = json.loads(result.stdout)
-        videos = []
-        channel_info = {"name": "Unknown", "id": "", "total_videos": 0}
         
-        # Extract channel info
-        if "uploader" in data:
-            channel_info["name"] = data.get("uploader", "Unknown")
-            channel_info["id"] = data.get("uploader_id", "")
-            channel_info["total_videos"] = data.get("playlist_count", 0)
-        
-        # Extract video entries
-        entries = data.get("entries", [])
-        for entry in entries:
-            if not entry:
-                continue
-            
-            video_id = entry.get("id", "")
-            title = entry.get("title", "No title")
-            
-            # Get thumbnail - try multiple fields
-            thumbnail = ""
-            if "thumbnail" in entry:
-                thumbnail = entry["thumbnail"]
-            elif "thumbnails" in entry and entry["thumbnails"]:
-                thumbnail = entry["thumbnails"][-1].get("url", "")
-            
-            author = entry.get("uploader", channel_info["name"])
-            uploader_id = entry.get("uploader_id", channel_info["id"])
-            
-            videos.append({
-                "id": video_id,
-                "title": title,
-                "description": entry.get("description", ""),
-                "thumbnail": thumbnail,
-                "author": author,
-                "created_time": "",
-                "duration": str(entry.get("duration", "")) if entry.get("duration") else "",
-                "url": entry.get("url", f"https://www.bilibili.com/video/{video_id}"),
-            })
-        
+        # Extract detailed information
         return {
-            "status": "success",
-            "videos": videos,
-            "channel_info": channel_info,
+            "id": data.get("id", video_id),
+            "title": data.get("title", "No title"),
+            "description": data.get("description", ""),
+            "thumbnail": data.get("thumbnail", ""),
+            "author": data.get("uploader", "Unknown"),
+            "created_time": data.get("upload_date", ""),
+            "duration": str(data.get("duration", "")) if data.get("duration") else "",
+            "url": data.get("webpage_url", platform_url),
+            "view_count": data.get("view_count"),
+            "tags": data.get("tags", []),
         }
     except Exception as e:
-        raise RuntimeError(f"Failed to scan Bilibili channel: {str(e)}")
+        # Return basic info on error
+        return {
+            "id": video_id,
+            "title": "Error fetching details",
+            "description": str(e),
+            "thumbnail": "",
+            "author": "",
+            "created_time": "",
+            "duration": "",
+            "url": platform_url,
+            "view_count": None,
+            "tags": None,
+        }
+
+
+async def _scan_ytdlp_detailed(url: str, max_videos: int = 10) -> Dict[str, Any]:
+    """Detailed scan using yt-dlp with concurrent threads.
+    
+    First performs a fast scan to get video IDs, then fetches detailed info
+    for each video concurrently using 10 threads.
+    
+    Args:
+        url: Channel/playlist URL
+        max_videos: Maximum number of videos to process
+    """
+    # First, do a fast scan to get the list of video IDs
+    fast_result = await _scan_ytdlp_fast(url, max_videos)
+    videos_basic = fast_result["videos"]
+    
+    # Now fetch detailed information concurrently
+    detailed_videos = []
+    
+    # Use ThreadPoolExecutor to fetch details concurrently (10 threads)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Create futures for each video
+        future_to_video = {
+            executor.submit(_fetch_video_details_sync, video["id"], video["url"]): video
+            for video in videos_basic
+        }
+        
+        # Wait for all futures to complete
+        for future in concurrent.futures.as_completed(future_to_video):
+            try:
+                detailed_info = future.result()
+                detailed_videos.append(detailed_info)
+            except Exception as e:
+                # If a video fails, use basic info
+                video = future_to_video[future]
+                detailed_videos.append(video)
+    
+    return {
+        "status": "success",
+        "videos": detailed_videos,
+        "channel_info": fast_result["channel_info"],
+        "mode": "detailed",
+    }
+
+
+def _fetch_video_details_sync(video_id: str, platform_url: str) -> Dict[str, Any]:
+    """Synchronous wrapper for _fetch_video_details for use with ThreadPoolExecutor."""
+    import asyncio
+    
+    # Create a new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_fetch_video_details(video_id, platform_url))
+    finally:
+        loop.close()
+
+
+# Keep old functions for backward compatibility during transition
+async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
+    """Legacy function - redirects to unified yt-dlp fast scan."""
+    return await _scan_ytdlp_fast(url, max_videos)
+
+
+async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
+    """Legacy function - redirects to unified yt-dlp fast scan."""
+    return await _scan_ytdlp_fast(url, max_videos)
 
 
 async def _download_video_task(download_id: str, data: DownloadRequest) -> None:
@@ -490,12 +571,9 @@ async def _download_video_task(download_id: str, data: DownloadRequest) -> None:
         
         if data.type == "douyin":
             video_path = await _download_douyin_video(data.url, data_dir, download_id)
-        elif data.type == "youtube":
-            video_path = await _download_youtube_video(data.url, data_dir, download_id)
-        elif data.type == "bilibili":
-            video_path = await _download_bilibili_video(data.url, data_dir, download_id)
         else:
-            raise ValueError(f"Invalid download type: {data.type}")
+            # Use unified yt-dlp download for all other platforms (youtube, bilibili, etc.)
+            video_path = await _download_ytdlp_video(data.url, data_dir, download_id)
         
         # Read video file and save to database
         with open(video_path, "rb") as f:
@@ -582,23 +660,11 @@ async def _download_douyin_video(url: str, output_dir: Path, download_id: str) -
     return output_path
 
 
-async def _download_youtube_video(url: str, output_dir: Path, download_id: str) -> Path:
-    """Download a YouTube video using yt-dlp."""
-    import platform
-    import shutil
+async def _download_ytdlp_video(url: str, output_dir: Path, download_id: str) -> Path:
+    """Unified download function using yt-dlp for YouTube, Bilibili, and other platforms."""
+    yt_dlp_cmd = _get_ytdlp_command()
     
-    # Determine which yt-dlp to use based on platform
-    if platform.system() == "Windows":
-        yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
-        yt_dlp_cmd = str(yt_dlp_path)
-    else:
-        # On Linux/Mac, try to use yt-dlp from PATH
-        yt_dlp_cmd = shutil.which("yt-dlp")
-        if not yt_dlp_cmd:
-            # Try python -m yt_dlp as fallback
-            yt_dlp_cmd = None
-    
-    output_template = str(output_dir / f"youtube-{download_id}.%(ext)s")
+    output_template = str(output_dir / f"video-{download_id}.%(ext)s")
     
     if yt_dlp_cmd:
         cmd = [
@@ -624,67 +690,22 @@ async def _download_youtube_video(url: str, output_dir: Path, download_id: str) 
     )
     
     if result.returncode != 0:
-        raise RuntimeError(f"YouTube download failed: {result.stderr}")
+        raise RuntimeError(f"Video download failed: {result.stderr}")
     
     # Find the downloaded file
-    downloaded_files = list(output_dir.glob(f"youtube-{download_id}.*"))
+    downloaded_files = list(output_dir.glob(f"video-{download_id}.*"))
     if not downloaded_files:
         raise RuntimeError("Downloaded file not found")
     
     return downloaded_files[0]
+
+
+# Legacy functions for backward compatibility
+async def _download_youtube_video(url: str, output_dir: Path, download_id: str) -> Path:
+    """Legacy function - redirects to unified yt-dlp download."""
+    return await _download_ytdlp_video(url, output_dir, download_id)
 
 
 async def _download_bilibili_video(url: str, output_dir: Path, download_id: str) -> Path:
-    """Download a Bilibili video using yt-dlp."""
-    import platform
-    import shutil
-    
-    # Determine which yt-dlp to use based on platform
-    if platform.system() == "Windows":
-        yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
-        yt_dlp_cmd = str(yt_dlp_path)
-    else:
-        # On Linux/Mac, try to use yt-dlp from PATH
-        yt_dlp_cmd = shutil.which("yt-dlp")
-        if not yt_dlp_cmd:
-            # Try python -m yt_dlp as fallback
-            yt_dlp_cmd = None
-    
-    output_template = str(output_dir / f"bilibili-{download_id}.%(ext)s")
-    
-    if yt_dlp_cmd:
-        cmd = [
-            yt_dlp_cmd,
-            "-f", "best[ext=mp4]/best",
-            "-o", output_template,
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "--referer", "https://www.bilibili.com/",
-            url,
-        ]
-    else:
-        # Use python module as fallback
-        cmd = [
-            sys.executable, "-m", "yt_dlp",
-            "-f", "best[ext=mp4]/best",
-            "-o", output_template,
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "--referer", "https://www.bilibili.com/",
-            url,
-        ]
-    
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    
-    if result.returncode != 0:
-        raise RuntimeError(f"Bilibili download failed: {result.stderr}")
-    
-    # Find the downloaded file
-    downloaded_files = list(output_dir.glob(f"bilibili-{download_id}.*"))
-    if not downloaded_files:
-        raise RuntimeError("Downloaded file not found")
-    
-    return downloaded_files[0]
+    """Legacy function - redirects to unified yt-dlp download."""
+    return await _download_ytdlp_video(url, output_dir, download_id)
