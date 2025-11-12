@@ -30,6 +30,10 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   const [newChannelType, setNewChannelType] = useState<'douyin' | 'youtube' | 'bilibili'>('douyin');
   
   const [backendError, setBackendError] = useState<string | null>(null);
+  
+  // Drag selection state
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStartId, setDragStartId] = useState<string | null>(null);
 
   // Load saved channels on mount
   useEffect(() => {
@@ -142,6 +146,62 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
       setSelectedVideos(new Set(scannedVideos.map(v => v.id)));
     }
   };
+  
+  // Drag selection handlers
+  const handleMouseDown = (videoId: string, e: React.MouseEvent) => {
+    // Don't start drag if clicking on checkbox or button
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('button')) {
+      return;
+    }
+    
+    setIsDragging(true);
+    setDragStartId(videoId);
+    
+    // Toggle the clicked video
+    setSelectedVideos(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(videoId)) {
+        newSet.delete(videoId);
+      } else {
+        newSet.add(videoId);
+      }
+      return newSet;
+    });
+  };
+  
+  const handleMouseEnter = (videoId: string) => {
+    if (isDragging && dragStartId) {
+      // Find the range between dragStartId and current videoId
+      const startIndex = scannedVideos.findIndex(v => v.id === dragStartId);
+      const endIndex = scannedVideos.findIndex(v => v.id === videoId);
+      
+      if (startIndex !== -1 && endIndex !== -1) {
+        const minIndex = Math.min(startIndex, endIndex);
+        const maxIndex = Math.max(startIndex, endIndex);
+        
+        // Select all videos in the range
+        const videosInRange = scannedVideos.slice(minIndex, maxIndex + 1).map(v => v.id);
+        setSelectedVideos(new Set(videosInRange));
+      }
+    }
+  };
+  
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    setDragStartId(null);
+  };
+  
+  // Add global mouseup listener
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      setIsDragging(false);
+      setDragStartId(null);
+    };
+    
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, []);
 
   const handleMarkSelectedAsDownloaded = async (downloaded: boolean) => {
     if (selectedVideos.size === 0) {
@@ -444,7 +504,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
               <p className="ml-3">Đang quét kênh...</p>
             </div>
           ) : scannedVideos.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" style={{ userSelect: isDragging ? 'none' : 'auto' }}>
               {scannedVideos.map((video) => {
                 const isSelected = selectedVideos.has(video.id);
                 const isDownloaded = video.downloaded || false;
@@ -458,7 +518,13 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                 }
                 
                 return (
-                  <div key={video.id} className={`${bgColor} rounded-lg overflow-hidden hover:ring-2 ring-indigo-500 transition relative`}>
+                  <div 
+                    key={video.id} 
+                    className={`${bgColor} rounded-lg overflow-hidden hover:ring-2 ring-indigo-500 transition relative select-none`}
+                    onMouseDown={(e) => handleMouseDown(video.id, e)}
+                    onMouseEnter={() => handleMouseEnter(video.id)}
+                    onMouseUp={handleMouseUp}
+                  >
                     {/* Checkbox */}
                     <div className="absolute top-2 left-2 z-10">
                       <input
