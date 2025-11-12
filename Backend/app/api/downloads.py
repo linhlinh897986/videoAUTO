@@ -75,6 +75,11 @@ class DownloadStatusResponse(BaseModel):
     video_info: Optional[Dict[str, Any]] = None
 
 
+class MarkDownloadedRequest(BaseModel):
+    video_ids: List[str]
+    downloaded: bool  # True to mark as downloaded, False to unmark
+
+
 # --- API Endpoints ---
 @router.get("/channels", response_model=ChannelListResponse)
 async def get_channel_lists() -> ChannelListResponse:
@@ -177,6 +182,22 @@ async def get_download_history(project_id: Optional[str] = None) -> Dict[str, Li
     """Get download history, optionally filtered by project."""
     history = db.list_download_history(project_id)
     return {"downloads": history}
+
+
+@router.post("/mark-downloaded")
+async def mark_videos_downloaded(data: MarkDownloadedRequest) -> Dict[str, Any]:
+    """Mark videos as downloaded or unmark them."""
+    try:
+        for video_id in data.video_ids:
+            db.mark_video_downloaded(video_id, data.downloaded)
+        
+        return {
+            "status": "success",
+            "marked": len(data.video_ids),
+            "downloaded": data.downloaded
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to mark videos: {str(e)}")
 
 
 # --- Helper Functions ---

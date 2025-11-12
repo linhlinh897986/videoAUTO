@@ -144,6 +144,35 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
     }
   };
 
+  const selectDownloadedVideos = () => {
+    // Select all videos that are marked as downloaded
+    const downloadedIds = scannedVideos.filter(v => v.downloaded).map(v => v.id);
+    setSelectedVideos(new Set(downloadedIds));
+  };
+
+  const handleMarkSelectedAsDownloaded = async (downloaded: boolean) => {
+    if (selectedVideos.size === 0) {
+      alert('Vui lòng chọn ít nhất một video');
+      return;
+    }
+
+    try {
+      const videoIds = Array.from(selectedVideos);
+      await downloadService.markVideosDownloaded(videoIds, downloaded);
+      
+      // Update local state
+      setScannedVideos(prev => 
+        prev.map(v => selectedVideos.has(v.id) ? { ...v, downloaded } : v)
+      );
+      
+      const action = downloaded ? 'đã tải' : 'chưa tải';
+      alert(`Đã đánh dấu ${videoIds.length} video là ${action}`);
+    } catch (error) {
+      console.error('Failed to mark videos:', error);
+      alert(`Không thể đánh dấu video: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   const handleDownloadSelected = async () => {
     const videosToDownload = scannedVideos.filter(v => selectedVideos.has(v.id));
     if (videosToDownload.length === 0) {
@@ -306,7 +335,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
         {/* Channel Info & Bulk Actions */}
         {channelInfo && (
           <div className="bg-gray-800 rounded p-3 mb-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="font-semibold">{channelInfo.name}</p>
                 <p className="text-sm text-gray-400">
@@ -321,6 +350,13 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                   {selectedVideos.size === scannedVideos.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                 </button>
                 <button
+                  onClick={selectDownloadedVideos}
+                  className="bg-yellow-700 hover:bg-yellow-600 px-4 py-2 rounded text-sm"
+                  title="Chọn tất cả video đã tải"
+                >
+                  Quét để tick
+                </button>
+                <button
                   onClick={handleDownloadSelected}
                   disabled={selectedVideos.size === 0}
                   className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 px-4 py-2 rounded text-sm flex items-center gap-2"
@@ -329,6 +365,25 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                   Tải đã chọn ({selectedVideos.size})
                 </button>
               </div>
+            </div>
+            
+            {/* Mark as Downloaded Controls */}
+            <div className="flex items-center gap-2 pt-3 border-t border-gray-700">
+              <span className="text-sm text-gray-400">Đánh dấu đã chọn:</span>
+              <button
+                onClick={() => handleMarkSelectedAsDownloaded(true)}
+                disabled={selectedVideos.size === 0}
+                className="bg-green-700 hover:bg-green-600 disabled:bg-gray-600 px-3 py-1 rounded text-sm"
+              >
+                Đã tải
+              </button>
+              <button
+                onClick={() => handleMarkSelectedAsDownloaded(false)}
+                disabled={selectedVideos.size === 0}
+                className="bg-red-700 hover:bg-red-600 disabled:bg-gray-600 px-3 py-1 rounded text-sm"
+              >
+                Bỏ dấu
+              </button>
             </div>
           </div>
         )}

@@ -166,6 +166,19 @@ export async function getDownloadHistory(projectId?: string): Promise<DownloadSt
 }
 
 /**
+ * Mark videos as downloaded or unmark them
+ */
+export async function markVideosDownloaded(videoIds: string[], downloaded: boolean): Promise<{ status: string; marked: number; downloaded: boolean }> {
+    return jsonFetch<{ status: string; marked: number; downloaded: boolean }>('/downloads/mark-downloaded', {
+        method: 'POST',
+        body: JSON.stringify({
+            video_ids: videoIds,
+            downloaded: downloaded,
+        }),
+    });
+}
+
+/**
  * Poll download status until completion
  */
 export async function pollDownloadStatus(
