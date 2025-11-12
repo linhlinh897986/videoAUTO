@@ -94,14 +94,17 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
 
     try {
       const result = await downloadService.scanChannel(scanUrl, scanType, maxVideos);
-      // Reverse to show newest first
-      const reversedVideos = [...result.videos].reverse();
-      setScannedVideos(reversedVideos);
+      // Videos should already be in newest-to-oldest order from the API
+      setScannedVideos(result.videos);
       setChannelInfo({
         name: result.channel_info.name,
         total_videos: result.channel_info.total_videos,
       });
       setBackendError(null); // Clear backend error on success
+      
+      // Automatically select all downloaded videos after scanning
+      const downloadedIds = result.videos.filter(v => v.downloaded).map(v => v.id);
+      setSelectedVideos(new Set(downloadedIds));
     } catch (error) {
       console.error('Scan failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -142,12 +145,6 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
       // Select all
       setSelectedVideos(new Set(scannedVideos.map(v => v.id)));
     }
-  };
-
-  const selectDownloadedVideos = () => {
-    // Select all videos that are marked as downloaded
-    const downloadedIds = scannedVideos.filter(v => v.downloaded).map(v => v.id);
-    setSelectedVideos(new Set(downloadedIds));
   };
 
   const handleMarkSelectedAsDownloaded = async (downloaded: boolean) => {
@@ -348,13 +345,6 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                   className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm"
                 >
                   {selectedVideos.size === scannedVideos.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-                </button>
-                <button
-                  onClick={selectDownloadedVideos}
-                  className="bg-yellow-700 hover:bg-yellow-600 px-4 py-2 rounded text-sm"
-                  title="Chọn tất cả video đã tải"
-                >
-                  Quét để tick
                 </button>
                 <button
                   onClick={handleDownloadSelected}
