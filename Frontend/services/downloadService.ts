@@ -46,7 +46,7 @@ export interface ChannelItem {
     id: string;
     name: string;
     url: string;
-    type: 'douyin' | 'youtube';
+    type: 'douyin' | 'youtube' | 'bilibili';
     created_at: string;
 }
 
@@ -95,7 +95,7 @@ export async function getChannelLists(): Promise<ChannelItem[]> {
 /**
  * Add a new channel to the saved list
  */
-export async function addChannelList(name: string, url: string, type: 'douyin' | 'youtube'): Promise<ChannelItem> {
+export async function addChannelList(name: string, url: string, type: 'douyin' | 'youtube' | 'bilibili'): Promise<ChannelItem> {
     return jsonFetch<ChannelItem>('/downloads/channels', {
         method: 'POST',
         body: JSON.stringify({ name, url, type }),
@@ -114,7 +114,7 @@ export async function deleteChannelList(channelId: string): Promise<void> {
 /**
  * Scan a channel/user URL and get video list
  */
-export async function scanChannel(url: string, type: 'douyin' | 'youtube', maxVideos: number = 30): Promise<ScanResult> {
+export async function scanChannel(url: string, type: 'douyin' | 'youtube' | 'bilibili', maxVideos: number = 30): Promise<ScanResult> {
     return jsonFetch<ScanResult>('/downloads/scan', {
         method: 'POST',
         body: JSON.stringify({
@@ -132,7 +132,7 @@ export async function downloadVideo(
     videoId: string,
     url: string,
     projectId: string,
-    type: 'douyin' | 'youtube'
+    type: 'douyin' | 'youtube' | 'bilibili'
 ): Promise<{ status: string; download_id: string }> {
     return jsonFetch<{ status: string; download_id: string }>('/downloads/download', {
         method: 'POST',

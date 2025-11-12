@@ -16,7 +16,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   const [selectedVideos, setSelectedVideos] = useState<Set<string>>(new Set());
   
   const [scanUrl, setScanUrl] = useState('');
-  const [scanType, setScanType] = useState<'douyin' | 'youtube'>('douyin');
+  const [scanType, setScanType] = useState<'douyin' | 'youtube' | 'bilibili'>('douyin');
   const [maxVideos, setMaxVideos] = useState(100); // Increased default limit
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -27,7 +27,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   const [showAddChannel, setShowAddChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelUrl, setNewChannelUrl] = useState('');
-  const [newChannelType, setNewChannelType] = useState<'douyin' | 'youtube'>('douyin');
+  const [newChannelType, setNewChannelType] = useState<'douyin' | 'youtube' | 'bilibili'>('douyin');
   
   const [backendError, setBackendError] = useState<string | null>(null);
 
@@ -263,11 +263,12 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
         <div className="flex gap-2 mb-4">
           <select
             value={scanType}
-            onChange={(e) => setScanType(e.target.value as 'douyin' | 'youtube')}
+            onChange={(e) => setScanType(e.target.value as 'douyin' | 'youtube' | 'bilibili')}
             className="bg-gray-800 border border-gray-700 rounded px-3 py-2"
           >
             <option value="douyin">Douyin</option>
             <option value="youtube">YouTube</option>
+            <option value="bilibili">Bilibili</option>
           </select>
           
           <input
@@ -509,11 +510,12 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                 <label className="block text-sm mb-1">Loại</label>
                 <select
                   value={newChannelType}
-                  onChange={(e) => setNewChannelType(e.target.value as 'douyin' | 'youtube')}
+                  onChange={(e) => setNewChannelType(e.target.value as 'douyin' | 'youtube' | 'bilibili')}
                   className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
                 >
                   <option value="douyin">Douyin</option>
                   <option value="youtube">YouTube</option>
+                  <option value="bilibili">Bilibili</option>
                 </select>
               </div>
             </div>

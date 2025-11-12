@@ -38,7 +38,7 @@ class ChannelListResponse(BaseModel):
 
 class ScanRequest(BaseModel):
     url: str
-    type: str  # 'douyin' or 'youtube'
+    type: str  # 'douyin', 'youtube', or 'bilibili'
     max_videos: int = 30
 
 
@@ -63,7 +63,7 @@ class DownloadRequest(BaseModel):
     video_id: str
     url: str
     project_id: str
-    type: str  # 'douyin' or 'youtube'
+    type: str  # 'douyin', 'youtube', or 'bilibili'
 
 
 class DownloadStatusResponse(BaseModel):
@@ -123,8 +123,10 @@ async def scan_channel(data: ScanRequest) -> ScanResponse:
             result = await _scan_douyin_channel(data.url, data.max_videos)
         elif data.type == "youtube":
             result = await _scan_youtube_channel(data.url, data.max_videos)
+        elif data.type == "bilibili":
+            result = await _scan_bilibili_channel(data.url, data.max_videos)
         else:
-            raise HTTPException(status_code=400, detail="Invalid type. Must be 'douyin' or 'youtube'")
+            raise HTTPException(status_code=400, detail="Invalid type. Must be 'douyin', 'youtube', or 'bilibili'")
         
         # Save scanned videos to database (videos are already dicts)
         for video in result["videos"]:
@@ -183,8 +185,11 @@ async def _scan_douyin_channel(url: str, max_videos: int) -> Dict[str, Any]:
     try:
         # Run douyin script to get channel info
         # Change to douyin directory so it can find cookies.txt and other files in its directory
+        # Use both --recent-count and --need-items to get more videos
         result = subprocess.run(
-            [sys.executable, str(douyin_script), "--url", url, "--recent-count", str(max_videos)],
+            [sys.executable, str(douyin_script), "--url", url, 
+             "--recent-count", str(max_videos), 
+             "--need-items", str(max_videos)],
             capture_output=True,
             text=True,
             timeout=120,
@@ -339,6 +344,102 @@ async def _scan_youtube_channel(url: str, max_videos: int) -> Dict[str, Any]:
         }
     except Exception as e:
         raise RuntimeError(f"Failed to scan YouTube channel: {str(e)}")
+
+
+async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
+    """Scan a Bilibili channel using yt-dlp."""
+    import platform
+    import shutil
+    
+    # Determine which yt-dlp to use based on platform
+    if platform.system() == "Windows":
+        yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
+        yt_dlp_cmd = str(yt_dlp_path)
+    else:
+        # On Linux/Mac, try to use yt-dlp from PATH
+        yt_dlp_cmd = shutil.which("yt-dlp")
+        if not yt_dlp_cmd:
+            # Try python -m yt_dlp as fallback
+            yt_dlp_cmd = None
+    
+    try:
+        # Use yt-dlp with --print to get video info efficiently
+        # Format: id\ttitle\tthumbnail_url\tuploader (tab-separated)
+        if yt_dlp_cmd:
+            cmd = [
+                yt_dlp_cmd,
+                "--flat-playlist",
+                "--print", "%(id)s\t%(title)s\t%(thumbnails.-1.url)s\t%(uploader)s\t%(uploader_id)s",
+                "--playlist-end", str(max_videos),
+                "--no-warnings",
+                url,
+            ]
+        else:
+            # Use python module as fallback
+            cmd = [
+                sys.executable, "-m", "yt_dlp",
+                "--flat-playlist",
+                "--print", "%(id)s\t%(title)s\t%(thumbnails.-1.url)s\t%(uploader)s\t%(uploader_id)s",
+                "--playlist-end", str(max_videos),
+                "--no-warnings",
+                url,
+            ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Bilibili scan failed: {result.stderr}")
+        
+        # Parse tab-separated output (one video per line)
+        videos = []
+        channel_info = {"name": "Unknown", "id": "", "total_videos": 0}
+        
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            try:
+                # Split by tab: id, title, thumbnail, uploader, uploader_id
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    video_id = parts[0]
+                    title = parts[1]
+                    thumbnail = parts[2] if len(parts) > 2 and parts[2] != "NA" else ""
+                    author = parts[3] if len(parts) > 3 and parts[3] != "NA" else "Unknown"
+                    uploader_id = parts[4] if len(parts) > 4 and parts[4] != "NA" else ""
+                    
+                    videos.append({
+                        "id": video_id,
+                        "title": title,
+                        "description": "",
+                        "thumbnail": thumbnail,
+                        "author": author,
+                        "created_time": "",
+                        "duration": "",
+                        "url": f"https://www.bilibili.com/video/{video_id}",
+                    })
+                    
+                    # Update channel info from first video
+                    if not channel_info["id"] and author != "Unknown":
+                        channel_info = {
+                            "name": author,
+                            "id": uploader_id,
+                            "total_videos": 0,
+                        }
+            except Exception:
+                continue
+        
+        return {
+            "status": "success",
+            "videos": videos,
+            "channel_info": channel_info,
+        }
+    except Exception as e:
+        raise RuntimeError(f"Failed to scan Bilibili channel: {str(e)}")
 
 
 async def _download_video_task(download_id: str, data: DownloadRequest) -> None:
