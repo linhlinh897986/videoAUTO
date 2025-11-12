@@ -197,6 +197,11 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
           files: [...p.files, newVideoFile]
         }));
 
+        // Mark video as downloaded in local state
+        setScannedVideos(prev => 
+          prev.map(v => v.id === video.id ? { ...v, downloaded: true } : v)
+        );
+
         alert(`Video "${video.title}" đã được tải xuống và thêm vào tab Tệp Tin!`);
       }
       
@@ -390,84 +395,104 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
             </div>
           ) : scannedVideos.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {scannedVideos.map((video) => (
-                <div key={video.id} className="bg-gray-800 rounded-lg overflow-hidden hover:ring-2 ring-indigo-500 transition relative">
-                  {/* Checkbox */}
-                  <div className="absolute top-2 left-2 z-10">
-                    <input
-                      type="checkbox"
-                      checked={selectedVideos.has(video.id)}
-                      onChange={() => toggleVideoSelection(video.id)}
-                      className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                    />
-                  </div>
-                  
-                  {/* Thumbnail */}
-                  <div className="relative aspect-video bg-gray-700 flex items-center justify-center">
-                    {video.thumbnail && video.thumbnail !== "" && video.thumbnail !== "N/A" ? (
-                      <img
-                        src={video.thumbnail}
-                        alt={video.title}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.onerror = null; // Prevent infinite loop
-                          target.style.display = 'none';
-                          const parent = target.parentElement;
-                          if (parent && !parent.querySelector('.thumbnail-fallback')) {
-                            const fallback = document.createElement('div');
-                            fallback.className = 'thumbnail-fallback absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center';
-                            fallback.innerHTML = `
-                              <div>
-                                <svg class="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                </svg>
-                                <div>Không có ảnh xem trước</div>
-                              </div>
-                            `;
-                            parent.appendChild(fallback);
-                          }
-                        }}
+              {scannedVideos.map((video) => {
+                const isSelected = selectedVideos.has(video.id);
+                const isDownloaded = video.downloaded || false;
+                
+                // Determine background color based on status
+                let bgColor = 'bg-gray-800'; // default
+                if (isSelected) {
+                  bgColor = 'bg-green-900/40'; // green for selected/checked
+                } else if (isDownloaded) {
+                  bgColor = 'bg-yellow-900/40'; // yellow for downloaded
+                }
+                
+                return (
+                  <div key={video.id} className={`${bgColor} rounded-lg overflow-hidden hover:ring-2 ring-indigo-500 transition relative`}>
+                    {/* Checkbox */}
+                    <div className="absolute top-2 left-2 z-10">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleVideoSelection(video.id)}
+                        className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                       />
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
-                        <div>
-                          <svg className="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                          <div>Không có ảnh xem trước</div>
-                        </div>
+                    </div>
+                    
+                    {/* Downloaded Badge */}
+                    {isDownloaded && (
+                      <div className="absolute top-2 right-2 z-10 bg-yellow-500 text-yellow-900 text-xs font-bold px-2 py-1 rounded">
+                        Đã tải
                       </div>
                     )}
-                  </div>
-                  
-                  {/* Video Info */}
-                  <div className="p-3">
-                    <h4 className="font-medium line-clamp-2 mb-1" title={video.title}>
-                      {video.title || 'No title'}
-                    </h4>
-                    <p className="text-sm text-gray-400 mb-2">{video.author}</p>
-                    {video.created_time && (
-                      <p className="text-xs text-gray-500 mb-2">{video.created_time}</p>
-                    )}
                     
-                    {/* Download Button */}
-                    <button
-                      onClick={() => handleDownloadVideo(video)}
-                      disabled={downloadingVideos.has(video.id)}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 px-3 py-2 rounded text-sm flex items-center justify-center gap-2"
-                    >
-                      {downloadingVideos.has(video.id) ? (
-                        <LoadingSpinner className="w-4 h-4" />
+                    {/* Thumbnail */}
+                    <div className="relative aspect-video bg-gray-700 flex items-center justify-center">
+                      {video.thumbnail && video.thumbnail !== "" && video.thumbnail !== "N/A" ? (
+                        <img
+                          src={video.thumbnail}
+                          alt={video.title}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            target.onerror = null; // Prevent infinite loop
+                            target.style.display = 'none';
+                            const parent = target.parentElement;
+                            if (parent && !parent.querySelector('.thumbnail-fallback')) {
+                              const fallback = document.createElement('div');
+                              fallback.className = 'thumbnail-fallback absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center';
+                              fallback.innerHTML = `
+                                <div>
+                                  <svg class="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                  </svg>
+                                  <div>Không có ảnh xem trước</div>
+                                </div>
+                              `;
+                              parent.appendChild(fallback);
+                            }
+                          }}
+                        />
                       ) : (
-                        <DownloadIcon className="w-4 h-4" />
+                        <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
+                          <div>
+                            <svg className="w-12 h-12 mx-auto mb-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            <div>Không có ảnh xem trước</div>
+                          </div>
+                        </div>
                       )}
-                      {getDownloadButtonText(video)}
-                    </button>
+                    </div>
+                    
+                    {/* Video Info */}
+                    <div className="p-3">
+                      <h4 className="font-medium line-clamp-2 mb-1" title={video.title}>
+                        {video.title || 'No title'}
+                      </h4>
+                      <p className="text-sm text-gray-400 mb-2">{video.author}</p>
+                      {video.created_time && (
+                        <p className="text-xs text-gray-500 mb-2">{video.created_time}</p>
+                      )}
+                      
+                      {/* Download Button */}
+                      <button
+                        onClick={() => handleDownloadVideo(video)}
+                        disabled={downloadingVideos.has(video.id)}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 px-3 py-2 rounded text-sm flex items-center justify-center gap-2"
+                      >
+                        {downloadingVideos.has(video.id) ? (
+                          <LoadingSpinner className="w-4 h-4" />
+                        ) : (
+                          <DownloadIcon className="w-4 h-4" />
+                        )}
+                        {getDownloadButtonText(video)}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500">

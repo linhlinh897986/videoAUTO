@@ -51,6 +51,7 @@ class ScannedVideo(BaseModel):
     created_time: Optional[str] = ""  # Can be None
     duration: Optional[str] = None
     url: str
+    downloaded: bool = False  # Track if video has been downloaded
 
 
 class ScanResponse(BaseModel):
@@ -128,9 +129,11 @@ async def scan_channel(data: ScanRequest) -> ScanResponse:
         else:
             raise HTTPException(status_code=400, detail="Invalid type. Must be 'douyin', 'youtube', or 'bilibili'")
         
-        # Save scanned videos to database (videos are already dicts)
+        # Save scanned videos to database and check download status
         for video in result["videos"]:
             db.save_scanned_video(video)
+            # Check if this video was previously downloaded
+            video["downloaded"] = db.get_video_download_status(video["id"])
         
         return ScanResponse(**result)
     except Exception as e:
@@ -365,13 +368,12 @@ async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
             yt_dlp_cmd = None
     
     try:
-        # Use yt-dlp with --print to get video info efficiently
-        # Format: id\ttitle\tthumbnail_url\tuploader (tab-separated)
+        # Use yt-dlp with JSON output for more reliable parsing
         if yt_dlp_cmd:
             cmd = [
                 yt_dlp_cmd,
                 "--flat-playlist",
-                "--print", "%(id)s\t%(title)s\t%(thumbnails.-1.url)s\t%(uploader)s\t%(uploader_id)s",
+                "--dump-single-json",
                 "--playlist-end", str(max_videos),
                 "--no-warnings",
                 url,
@@ -381,7 +383,7 @@ async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
             cmd = [
                 sys.executable, "-m", "yt_dlp",
                 "--flat-playlist",
-                "--print", "%(id)s\t%(title)s\t%(thumbnails.-1.url)s\t%(uploader)s\t%(uploader_id)s",
+                "--dump-single-json",
                 "--playlist-end", str(max_videos),
                 "--no-warnings",
                 url,
@@ -397,43 +399,46 @@ async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
         if result.returncode != 0:
             raise RuntimeError(f"Bilibili scan failed: {result.stderr}")
         
-        # Parse tab-separated output (one video per line)
+        # Parse JSON output
+        data = json.loads(result.stdout)
         videos = []
         channel_info = {"name": "Unknown", "id": "", "total_videos": 0}
         
-        for line in result.stdout.strip().split("\n"):
-            if not line:
+        # Extract channel info
+        if "uploader" in data:
+            channel_info["name"] = data.get("uploader", "Unknown")
+            channel_info["id"] = data.get("uploader_id", "")
+            channel_info["total_videos"] = data.get("playlist_count", 0)
+        
+        # Extract video entries
+        entries = data.get("entries", [])
+        for entry in entries:
+            if not entry:
                 continue
-            try:
-                # Split by tab: id, title, thumbnail, uploader, uploader_id
-                parts = line.split("\t")
-                if len(parts) >= 3:
-                    video_id = parts[0]
-                    title = parts[1]
-                    thumbnail = parts[2] if len(parts) > 2 and parts[2] != "NA" else ""
-                    author = parts[3] if len(parts) > 3 and parts[3] != "NA" else "Unknown"
-                    uploader_id = parts[4] if len(parts) > 4 and parts[4] != "NA" else ""
-                    
-                    videos.append({
-                        "id": video_id,
-                        "title": title,
-                        "description": "",
-                        "thumbnail": thumbnail,
-                        "author": author,
-                        "created_time": "",
-                        "duration": "",
-                        "url": f"https://www.bilibili.com/video/{video_id}",
-                    })
-                    
-                    # Update channel info from first video
-                    if not channel_info["id"] and author != "Unknown":
-                        channel_info = {
-                            "name": author,
-                            "id": uploader_id,
-                            "total_videos": 0,
-                        }
-            except Exception:
-                continue
+            
+            video_id = entry.get("id", "")
+            title = entry.get("title", "No title")
+            
+            # Get thumbnail - try multiple fields
+            thumbnail = ""
+            if "thumbnail" in entry:
+                thumbnail = entry["thumbnail"]
+            elif "thumbnails" in entry and entry["thumbnails"]:
+                thumbnail = entry["thumbnails"][-1].get("url", "")
+            
+            author = entry.get("uploader", channel_info["name"])
+            uploader_id = entry.get("uploader_id", channel_info["id"])
+            
+            videos.append({
+                "id": video_id,
+                "title": title,
+                "description": entry.get("description", ""),
+                "thumbnail": thumbnail,
+                "author": author,
+                "created_time": "",
+                "duration": str(entry.get("duration", "")) if entry.get("duration") else "",
+                "url": entry.get("url", f"https://www.bilibili.com/video/{video_id}"),
+            })
         
         return {
             "status": "success",
@@ -459,6 +464,8 @@ async def _download_video_task(download_id: str, data: DownloadRequest) -> None:
             video_path = await _download_douyin_video(data.url, data_dir, download_id)
         elif data.type == "youtube":
             video_path = await _download_youtube_video(data.url, data_dir, download_id)
+        elif data.type == "bilibili":
+            video_path = await _download_bilibili_video(data.url, data_dir, download_id)
         else:
             raise ValueError(f"Invalid download type: {data.type}")
         
@@ -490,6 +497,9 @@ async def _download_video_task(download_id: str, data: DownloadRequest) -> None:
                 "path": str(storage_path),
             },
         )
+        
+        # Mark video as downloaded in scanned_videos table
+        db.mark_video_downloaded(data.video_id, True)
     except Exception as e:
         # Update status to failed
         db.update_download_status(
@@ -590,6 +600,58 @@ async def _download_youtube_video(url: str, output_dir: Path, download_id: str) 
     
     # Find the downloaded file
     downloaded_files = list(output_dir.glob(f"youtube-{download_id}.*"))
+    if not downloaded_files:
+        raise RuntimeError("Downloaded file not found")
+    
+    return downloaded_files[0]
+
+
+async def _download_bilibili_video(url: str, output_dir: Path, download_id: str) -> Path:
+    """Download a Bilibili video using yt-dlp."""
+    import platform
+    import shutil
+    
+    # Determine which yt-dlp to use based on platform
+    if platform.system() == "Windows":
+        yt_dlp_path = Path(__file__).parent.parent / "download" / "yt-dlp.exe"
+        yt_dlp_cmd = str(yt_dlp_path)
+    else:
+        # On Linux/Mac, try to use yt-dlp from PATH
+        yt_dlp_cmd = shutil.which("yt-dlp")
+        if not yt_dlp_cmd:
+            # Try python -m yt_dlp as fallback
+            yt_dlp_cmd = None
+    
+    output_template = str(output_dir / f"bilibili-{download_id}.%(ext)s")
+    
+    if yt_dlp_cmd:
+        cmd = [
+            yt_dlp_cmd,
+            "-f", "best[ext=mp4]/best",
+            "-o", output_template,
+            url,
+        ]
+    else:
+        # Use python module as fallback
+        cmd = [
+            sys.executable, "-m", "yt_dlp",
+            "-f", "best[ext=mp4]/best",
+            "-o", output_template,
+            url,
+        ]
+    
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"Bilibili download failed: {result.stderr}")
+    
+    # Find the downloaded file
+    downloaded_files = list(output_dir.glob(f"bilibili-{download_id}.*"))
     if not downloaded_files:
         raise RuntimeError("Downloaded file not found")
     

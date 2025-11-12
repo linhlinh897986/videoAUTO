@@ -65,7 +65,8 @@ class Database:
                 CREATE TABLE IF NOT EXISTS scanned_videos (
                     id TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    downloaded INTEGER DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS download_status (
@@ -98,6 +99,13 @@ class Database:
 
         _add_column("storage_path", "TEXT")
         _add_column("file_size", "INTEGER")
+        
+        # Ensure scanned_videos table has downloaded column
+        try:
+            conn.execute("ALTER TABLE scanned_videos ADD COLUMN downloaded INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
 
     # --- Projects -----------------------------------------------------------------
     def list_projects(self) -> List[Dict[str, Any]]:
@@ -321,12 +329,32 @@ class Database:
     def get_scanned_video(self, video_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT data FROM scanned_videos WHERE id = ?",
+                "SELECT data, downloaded FROM scanned_videos WHERE id = ?",
                 (video_id,),
             ).fetchone()
         if row is None:
             return None
-        return json.loads(row["data"])
+        video_data = json.loads(row["data"])
+        video_data["downloaded"] = bool(row["downloaded"])
+        return video_data
+    
+    def mark_video_downloaded(self, video_id: str, downloaded: bool = True) -> None:
+        """Mark a video as downloaded or not downloaded."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE scanned_videos SET downloaded = ? WHERE id = ?",
+                (1 if downloaded else 0, video_id),
+            )
+            conn.commit()
+    
+    def get_video_download_status(self, video_id: str) -> bool:
+        """Check if a video has been downloaded."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT downloaded FROM scanned_videos WHERE id = ?",
+                (video_id,),
+            ).fetchone()
+        return bool(row["downloaded"]) if row else False
 
     # --- Download Status ----------------------------------------------------------
     def save_download_status(

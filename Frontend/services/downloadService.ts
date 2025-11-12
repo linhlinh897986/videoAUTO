@@ -59,6 +59,7 @@ export interface ScannedVideo {
     created_time: string;
     duration?: string;
     url: string;
+    downloaded?: boolean;  // Track if video has been downloaded
 }
 
 export interface ScanResult {
