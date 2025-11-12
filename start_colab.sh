@@ -3,12 +3,10 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$ROOT_DIR/.colab-logs"
-NGROK_DIR="$ROOT_DIR/.ngrok-bin"
-NGROK_BIN="$NGROK_DIR/ngrok"
-NGROK_TOKEN="${NGROK_AUTHTOKEN:-2ScO6CTnKEI0FI0RcxcyLADNCAh_771vYkBo8o7jNKwgFX4Jt}"
+CLOUDFLARED_DIR="$ROOT_DIR/.cloudflared-bin"
+CLOUDFLARED_BIN="$CLOUDFLARED_DIR/cloudflared"
 BACKEND_PORT=8000
 FRONTEND_PORT=4173
-NGROK_CONFIG="$LOG_DIR/ngrok.yml"
 
 mkdir -p "$LOG_DIR"
 
@@ -64,24 +62,13 @@ ensure_node() {
     (cd "$ROOT_DIR/Frontend" && log "Installing frontend dependencies" && npm install >/dev/null)
 }
 
-ensure_ngrok() {
-    if [ ! -x "$NGROK_BIN" ]; then
-        log "Downloading ngrok binary"
-        mkdir -p "$NGROK_DIR"
-        curl -sSLo "$NGROK_DIR/ngrok.tgz" https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
-        tar -xzf "$NGROK_DIR/ngrok.tgz" -C "$NGROK_DIR"
-        rm "$NGROK_DIR/ngrok.tgz"
-        chmod +x "$NGROK_BIN"
+ensure_cloudflared() {
+    if [ ! -x "$CLOUDFLARED_BIN" ]; then
+        log "Downloading cloudflared binary"
+        mkdir -p "$CLOUDFLARED_DIR"
+        curl -sSLo "$CLOUDFLARED_BIN" https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+        chmod +x "$CLOUDFLARED_BIN"
     fi
-
-    cat > "$NGROK_CONFIG" <<CFG
-version: 2
-authtoken: $NGROK_TOKEN
-tunnels:
-  frontend:
-    addr: $FRONTEND_PORT
-    proto: http
-CFG
 }
 
 start_backend() {
@@ -90,49 +77,30 @@ start_backend() {
     (cd "$ROOT_DIR/Backend" && nohup python3 -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" > "$LOG_DIR/backend.log" 2>&1 &)
 }
 
-start_ngrok() {
-    cleanup_process "ngrok .*ngrok.yml"
-    log "Starting ngrok tunnels"
-    nohup "$NGROK_BIN" start --all --config "$NGROK_CONFIG" > "$LOG_DIR/ngrok.log" 2>&1 &
+start_cloudflared() {
+    cleanup_process "cloudflared tunnel"
+    log "Starting cloudflared tunnel for frontend"
+    nohup "$CLOUDFLARED_BIN" tunnel --url "http://127.0.0.1:$FRONTEND_PORT" > "$LOG_DIR/cloudflared.log" 2>&1 &
 
-    # Wait for ngrok API to report active tunnels
-    local attempts=0
-    while [ $attempts -lt 30 ]; do
-        sleep 2
-        if curl -sS http://127.0.0.1:4040/api/tunnels >/dev/null 2>&1; then
-            break
-        fi
-        attempts=$((attempts + 1))
-    done
-
-    if [ $attempts -eq 30 ]; then
-        log "ngrok API did not start in time"
-        exit 1
-    fi
+    # Wait for cloudflared to start
+    sleep 5
 }
 
-extract_ngrok_url() {
-    local tunnel_name="$1"
-    python3 - "$tunnel_name" <<'PY'
-import json
-import sys
-from urllib.request import urlopen
-from urllib.error import URLError
-
-target = sys.argv[1]
-
-try:
-    with urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as response:
-        payload = response.read()
-    data = json.loads(payload.decode("utf-8"))
-except (URLError, TimeoutError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
-    sys.exit(0)
-
-for tunnel in data.get("tunnels", []):
-    if tunnel.get("name") == target:
-        print(tunnel.get("public_url", ""))
-        break
-PY
+extract_cloudflared_url() {
+    # Extract URL from cloudflared log file
+    local attempts=0
+    while [ $attempts -lt 30 ]; do
+        if [ -f "$LOG_DIR/cloudflared.log" ]; then
+            local url=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$LOG_DIR/cloudflared.log" | head -n1)
+            if [ -n "$url" ]; then
+                echo "$url"
+                return 0
+            fi
+        fi
+        sleep 2
+        attempts=$((attempts + 1))
+    done
+    echo ""
 }
 
 wait_for_backend() {
@@ -159,26 +127,16 @@ start_frontend() {
 }
 
 print_summary() {
-    local frontend_url=""
-
-    local attempts=0
-    while [ $attempts -lt 15 ]; do
-        frontend_url=$(extract_ngrok_url frontend)
-        if [ -n "$frontend_url" ]; then
-            break
-        fi
-        sleep 2
-        attempts=$((attempts + 1))
-    done
+    local frontend_url=$(extract_cloudflared_url)
 
     log "--- Setup Complete ---"
     log "Backend local URL:   http://127.0.0.1:$BACKEND_PORT (inside Colab runtime)"
     log "Frontend public URL: $frontend_url"
     log "Uploaded media path: $ROOT_DIR/Backend/data/files"
     log "ASR SRT exports:     $ROOT_DIR/Backend/data/asr"
-    log "Backend log:   $LOG_DIR/backend.log"
-    log "Frontend log:  $LOG_DIR/frontend.log"
-    log "ngrok log:     $LOG_DIR/ngrok.log"
+    log "Backend log:      $LOG_DIR/backend.log"
+    log "Frontend log:     $LOG_DIR/frontend.log"
+    log "Cloudflared log:  $LOG_DIR/cloudflared.log"
     log "Use 'tail -f <logfile>' to monitor output."
 }
 
@@ -186,7 +144,7 @@ ensure_python_env
 ensure_ffmpeg
 ensure_node
 start_backend
-ensure_ngrok
-start_ngrok
+ensure_cloudflared
+start_cloudflared
 start_frontend
 print_summary
