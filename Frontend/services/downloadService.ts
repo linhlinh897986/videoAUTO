@@ -46,7 +46,7 @@ export interface ChannelItem {
     id: string;
     name: string;
     url: string;
-    type: 'douyin' | 'youtube' | 'bilibili';
+    type: 'douyin' | 'other';  // Updated to match backend
     created_at: string;
 }
 
@@ -59,6 +59,8 @@ export interface ScannedVideo {
     created_time: string;
     duration?: string;
     url: string;
+    view_count?: number;  // NEW: View count for detailed mode
+    tags?: string[];  // NEW: Tags for detailed mode
     downloaded?: boolean;  // Track if video has been downloaded
 }
 
@@ -70,6 +72,8 @@ export interface ScanResult {
         id: string;
         total_videos: number;
     };
+    mode: string;  // NEW: 'fast' or 'detailed'
+    total_channel_videos?: number;  // NEW: Total videos in channel
 }
 
 export interface DownloadStatus {
@@ -95,11 +99,15 @@ export async function getChannelLists(): Promise<ChannelItem[]> {
 
 /**
  * Add a new channel to the saved list
+ * @param type - Platform type: 'douyin', 'youtube', or 'bilibili'
  */
 export async function addChannelList(name: string, url: string, type: 'douyin' | 'youtube' | 'bilibili'): Promise<ChannelItem> {
+    // Convert frontend type to backend type for storage
+    const backendType = type === 'douyin' ? 'douyin' : 'other';
+    
     return jsonFetch<ChannelItem>('/downloads/channels', {
         method: 'POST',
-        body: JSON.stringify({ name, url, type }),
+        body: JSON.stringify({ name, url, type: backendType }),
     });
 }
 
@@ -114,13 +122,25 @@ export async function deleteChannelList(channelId: string): Promise<void> {
 
 /**
  * Scan a channel/user URL and get video list
+ * @param type - Platform type: 'douyin', 'youtube', or 'bilibili'
+ * @param mode - Scan mode: 'fast' for quick preview, 'detailed' for complete metadata
+ * @param maxVideos - Maximum number of videos to retrieve (default: 10)
  */
-export async function scanChannel(url: string, type: 'douyin' | 'youtube' | 'bilibili', maxVideos: number = 30): Promise<ScanResult> {
+export async function scanChannel(
+    url: string, 
+    type: 'douyin' | 'youtube' | 'bilibili', 
+    mode: 'fast' | 'detailed' = 'fast',
+    maxVideos: number = 10
+): Promise<ScanResult> {
+    // Convert frontend type to backend type
+    const backendType = type === 'douyin' ? 'douyin' : 'other';
+    
     return jsonFetch<ScanResult>('/downloads/scan', {
         method: 'POST',
         body: JSON.stringify({
             url,
-            type,
+            type: backendType,
+            mode,
             max_videos: maxVideos,
         }),
     });
@@ -128,6 +148,7 @@ export async function scanChannel(url: string, type: 'douyin' | 'youtube' | 'bil
 
 /**
  * Start downloading a video
+ * @param type - Platform type: 'douyin', 'youtube', or 'bilibili'
  */
 export async function downloadVideo(
     videoId: string,
@@ -135,13 +156,16 @@ export async function downloadVideo(
     projectId: string,
     type: 'douyin' | 'youtube' | 'bilibili'
 ): Promise<{ status: string; download_id: string }> {
+    // Convert frontend type to backend type
+    const backendType = type === 'douyin' ? 'douyin' : 'other';
+    
     return jsonFetch<{ status: string; download_id: string }>('/downloads/download', {
         method: 'POST',
         body: JSON.stringify({
             video_id: videoId,
             url,
             project_id: projectId,
-            type,
+            type: backendType,
         }),
     });
 }
