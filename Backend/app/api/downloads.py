@@ -186,10 +186,12 @@ async def _scan_douyin_channel(url: str, max_videos: int) -> Dict[str, Any]:
         # Run douyin script to get channel info
         # Change to douyin directory so it can find cookies.txt and other files in its directory
         # Use both --recent-count and --need-items to get more videos
+        # Add --cookie-file parameter to load cookies for both douyin.py and mdouyin.py
         result = subprocess.run(
             [sys.executable, str(douyin_script), "--url", url, 
              "--recent-count", str(max_videos), 
-             "--need-items", str(max_videos)],
+             "--need-items", str(max_videos),
+             "--cookie-file", "cookies.txt"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -505,7 +507,7 @@ async def _download_douyin_video(url: str, output_dir: Path, download_id: str) -
     douyin_dir = douyin_script.parent
     
     result = subprocess.run(
-        [sys.executable, str(douyin_script), "--url", url],
+        [sys.executable, str(douyin_script), "--url", url, "--cookie-file", "cookies.txt"],
         capture_output=True,
         text=True,
         timeout=60,
