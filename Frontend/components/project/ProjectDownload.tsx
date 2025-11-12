@@ -101,10 +101,6 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
         total_videos: result.channel_info.total_videos,
       });
       setBackendError(null); // Clear backend error on success
-      
-      // Automatically select all downloaded videos after scanning
-      const downloadedIds = result.videos.filter(v => v.downloaded).map(v => v.id);
-      setSelectedVideos(new Set(downloadedIds));
     } catch (error) {
       console.error('Scan failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -171,9 +167,9 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   };
 
   const handleDownloadSelected = async () => {
-    const videosToDownload = scannedVideos.filter(v => selectedVideos.has(v.id));
+    const videosToDownload = scannedVideos.filter(v => selectedVideos.has(v.id) && !v.downloaded);
     if (videosToDownload.length === 0) {
-      alert('Vui lòng chọn ít nhất một video để tải xuống');
+      alert('Vui lòng chọn ít nhất một video chưa tải để tải xuống');
       return;
     }
 
@@ -188,6 +184,12 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   const handleDownloadVideo = async (video: ScannedVideo) => {
     if (downloadingVideos.has(video.id)) {
       return; // Already downloading
+    }
+    
+    // Skip if already downloaded
+    if (video.downloaded) {
+      alert(`Video "${video.title}" đã được tải trước đó`);
+      return;
     }
 
     try {
@@ -244,6 +246,9 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
   };
 
   const getDownloadButtonText = (video: ScannedVideo): string => {
+    if (video.downloaded) {
+      return 'Đã tải';
+    }
     if (downloadingVideos.has(video.id)) {
       const status = downloadStatuses.get(video.id);
       if (status) {
@@ -524,7 +529,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
                       {/* Download Button */}
                       <button
                         onClick={() => handleDownloadVideo(video)}
-                        disabled={downloadingVideos.has(video.id)}
+                        disabled={downloadingVideos.has(video.id) || video.downloaded}
                         className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 px-3 py-2 rounded text-sm flex items-center justify-center gap-2"
                       >
                         {downloadingVideos.has(video.id) ? (
