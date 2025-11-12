@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Project, SrtFile, CustomStyle, ApiKey } from '../../types';
 import { PRESET_STYLES } from '../../constants';
-import { BackArrowIcon, PencilIcon, SparklesIcon, FileIcon, UserAvatar, GlobeAltIcon } from '../ui/Icons';
+import { BackArrowIcon, PencilIcon, SparklesIcon, FileIcon, UserAvatar, GlobeAltIcon, DownloadIcon } from '../ui/Icons';
 import StyleManagerModal from '../modals/StyleManagerModal';
 import ApiKeyManagerModal from '../modals/ApiKeyManagerModal';
 import ProjectFiles from '../project/ProjectFiles';
@@ -9,6 +9,7 @@ import ProjectKeywords from '../project/ProjectKeywords';
 import ProjectCharacters from '../project/ProjectCharacters';
 import ProjectContext from '../project/ProjectContext';
 import ProjectSettings from '../project/ProjectSettings';
+import ProjectDownload from '../project/ProjectDownload';
 
 interface ProjectViewProps {
   project: Project;
@@ -24,7 +25,7 @@ interface ProjectViewProps {
   setProcessingStatus: React.Dispatch<React.SetStateAction<{ [id: string]: string }>>;
 }
 
-type Tab = 'files' | 'keywords' | 'characters' | 'context' | 'settings';
+type Tab = 'files' | 'download' | 'keywords' | 'characters' | 'context' | 'settings';
 
 const ProjectView: React.FC<ProjectViewProps> = (props) => {
   const { project, onUpdateProject, onBack, customStyles, onUpdateCustomStyles, apiKeys, onApiKeysChange, onRefreshApiKeys, onEditVideo, processingStatus, setProcessingStatus } = props;
@@ -38,6 +39,7 @@ const ProjectView: React.FC<ProjectViewProps> = (props) => {
 
   const TABS: { id: Tab, name: string, icon: React.ReactNode }[] = [
       { id: 'files', name: `Tệp Tin (${project.files.length})`, icon: <FileIcon className="w-5 h-5 mr-2" />},
+      { id: 'download', name: 'Tải Xuống', icon: <DownloadIcon className="w-5 h-5 mr-2" />},
       { id: 'keywords', name: `Từ Khóa (${(project.keywords || []).length})`, icon: <SparklesIcon className="w-5 h-5 mr-2" />},
       { id: 'characters', name: `Nhân Vật (${(project.characterProfile || []).length})`, icon: <UserAvatar className="w-5 h-5 mr-2"/> },
       { id: 'context', name: `Bối Cảnh (${(project.locations?.length || 0) + (project.skills?.length || 0) + (project.realms?.length || 0)})`, icon: <GlobeAltIcon className="w-5 h-5 mr-2"/> },
@@ -67,6 +69,7 @@ const ProjectView: React.FC<ProjectViewProps> = (props) => {
         <section className="flex-grow">
           <div className="h-[calc(100vh-69px)]">
              {activeTab === 'files' && <ProjectFiles {...props} processingStatus={processingStatus} setProcessingStatus={setProcessingStatus} />}
+             {activeTab === 'download' && <ProjectDownload project={project} onUpdateProject={onUpdateProject} />}
              {activeTab === 'keywords' && <ProjectKeywords {...props} />}
              {activeTab === 'characters' && <ProjectCharacters {...props} />}
              {activeTab === 'context' && <ProjectContext {...props} />}

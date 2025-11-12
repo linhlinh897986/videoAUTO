@@ -55,6 +55,33 @@ class Database:
                     file_size INTEGER,
                     FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS channel_lists (
+                    id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS scanned_videos (
+                    id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS download_status (
+                    id TEXT PRIMARY KEY,
+                    video_id TEXT NOT NULL,
+                    project_id TEXT,
+                    status TEXT NOT NULL,
+                    progress INTEGER,
+                    message TEXT,
+                    video_info TEXT,
+                    url TEXT,
+                    type TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                );
                 """
             )
             self._ensure_file_columns(conn)
@@ -253,3 +280,169 @@ class Database:
                 path.unlink()
             except FileNotFoundError:
                 pass
+
+    # --- Channel Lists ------------------------------------------------------------
+    def list_channel_lists(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT data FROM channel_lists ORDER BY created_at DESC").fetchall()
+        return [json.loads(row["data"]) for row in rows]
+
+    def save_channel_list(self, channel: Dict[str, Any], created_at: str) -> None:
+        channel_id = channel.get("id")
+        if not channel_id:
+            raise ValueError("Channel list is missing an 'id'")
+
+        with self._connect() as conn:
+            conn.execute(
+                "REPLACE INTO channel_lists (id, data, created_at) VALUES (?, ?, ?)",
+                (channel_id, json.dumps(channel), created_at),
+            )
+            conn.commit()
+
+    def delete_channel_list(self, channel_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM channel_lists WHERE id = ?", (channel_id,))
+            conn.commit()
+
+    # --- Scanned Videos -----------------------------------------------------------
+    def save_scanned_video(self, video: Dict[str, Any]) -> None:
+        video_id = video.get("id")
+        if not video_id:
+            raise ValueError("Scanned video is missing an 'id'")
+
+        created_at = video.get("created_time", "")
+        with self._connect() as conn:
+            conn.execute(
+                "REPLACE INTO scanned_videos (id, data, created_at) VALUES (?, ?, ?)",
+                (video_id, json.dumps(video), created_at),
+            )
+            conn.commit()
+
+    def get_scanned_video(self, video_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT data FROM scanned_videos WHERE id = ?",
+                (video_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["data"])
+
+    # --- Download Status ----------------------------------------------------------
+    def save_download_status(
+        self,
+        download_id: str,
+        video_id: str,
+        project_id: str,
+        status: str,
+        url: str,
+        type: str,
+        created_at: str,
+        progress: Optional[int] = None,
+        message: Optional[str] = None,
+        video_info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        video_info_json = json.dumps(video_info) if video_info else None
+
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO download_status 
+                   (id, video_id, project_id, status, progress, message, video_info, url, type, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    download_id,
+                    video_id,
+                    project_id,
+                    status,
+                    progress,
+                    message,
+                    video_info_json,
+                    url,
+                    type,
+                    created_at,
+                    created_at,
+                ),
+            )
+            conn.commit()
+
+    def update_download_status(
+        self,
+        download_id: str,
+        status: str,
+        progress: Optional[int] = None,
+        message: Optional[str] = None,
+        video_info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        import datetime as dt
+
+        video_info_json = json.dumps(video_info) if video_info else None
+        updated_at = dt.datetime.utcnow().isoformat()
+
+        with self._connect() as conn:
+            if video_info_json:
+                conn.execute(
+                    """UPDATE download_status 
+                       SET status = ?, progress = ?, message = ?, video_info = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (status, progress, message, video_info_json, updated_at, download_id),
+                )
+            else:
+                conn.execute(
+                    """UPDATE download_status 
+                       SET status = ?, progress = ?, message = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (status, progress, message, updated_at, download_id),
+                )
+            conn.commit()
+
+    def get_download_status(self, download_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM download_status WHERE id = ?",
+                (download_id,),
+            ).fetchone()
+        if row is None:
+            return None
+
+        video_info_json = row["video_info"]
+        return {
+            "id": row["id"],
+            "video_id": row["video_id"],
+            "project_id": row["project_id"],
+            "status": row["status"],
+            "progress": row["progress"],
+            "message": row["message"],
+            "video_info": json.loads(video_info_json) if video_info_json else None,
+            "url": row["url"],
+            "type": row["type"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_download_history(self, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            if project_id:
+                rows = conn.execute(
+                    "SELECT * FROM download_status WHERE project_id = ? ORDER BY created_at DESC",
+                    (project_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM download_status ORDER BY created_at DESC").fetchall()
+
+        results = []
+        for row in rows:
+            video_info_json = row["video_info"]
+            results.append({
+                "id": row["id"],
+                "video_id": row["video_id"],
+                "project_id": row["project_id"],
+                "status": row["status"],
+                "progress": row["progress"],
+                "message": row["message"],
+                "video_info": json.loads(video_info_json) if video_info_json else None,
+                "url": row["url"],
+                "type": row["type"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            })
+        return results

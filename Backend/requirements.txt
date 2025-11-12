@@ -7,3 +7,10 @@ opencv-python>=4.8.0
 Pillow>=10.0.0
 easyocr>=1.7.0
 torch>=2.0.0
+requests>=2.31.0
+yt-dlp>=2023.0.0
+# Douyin dependencies
+beautifulsoup4>=4.12.0
+pycryptodome>=3.19.0
+gmssl>=3.2.0
+PyExecJS>=1.5.1
