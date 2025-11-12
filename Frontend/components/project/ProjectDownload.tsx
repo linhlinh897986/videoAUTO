@@ -97,7 +97,7 @@ const ProjectDownload: React.FC<ProjectDownloadProps> = ({ project, onUpdateProj
     setSelectedVideos(new Set()); // Clear selections
 
     try {
-      const result = await downloadService.scanChannel(scanUrl, scanType, maxVideos);
+      const result = await downloadService.scanChannel(scanUrl, scanType, 'fast', maxVideos);
       // Videos should already be in newest-to-oldest order from the API
       setScannedVideos(result.videos);
       setChannelInfo({
