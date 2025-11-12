@@ -390,6 +390,7 @@ async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
     
     try:
         # Use yt-dlp with JSON output for more reliable parsing
+        # Add user-agent and referer to avoid 352 rejection
         if yt_dlp_cmd:
             cmd = [
                 yt_dlp_cmd,
@@ -397,6 +398,9 @@ async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
                 "--dump-single-json",
                 "--playlist-end", str(max_videos),
                 "--no-warnings",
+                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "--referer", "https://www.bilibili.com/",
+                "--extractor-args", "bilibili:getcomments=False",
                 url,
             ]
         else:
@@ -407,6 +411,9 @@ async def _scan_bilibili_channel(url: str, max_videos: int) -> Dict[str, Any]:
                 "--dump-single-json",
                 "--playlist-end", str(max_videos),
                 "--no-warnings",
+                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "--referer", "https://www.bilibili.com/",
+                "--extractor-args", "bilibili:getcomments=False",
                 url,
             ]
         
@@ -650,6 +657,8 @@ async def _download_bilibili_video(url: str, output_dir: Path, download_id: str)
             yt_dlp_cmd,
             "-f", "best[ext=mp4]/best",
             "-o", output_template,
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--referer", "https://www.bilibili.com/",
             url,
         ]
     else:
@@ -658,6 +667,8 @@ async def _download_bilibili_video(url: str, output_dir: Path, download_id: str)
             sys.executable, "-m", "yt_dlp",
             "-f", "best[ext=mp4]/best",
             "-o", output_template,
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--referer", "https://www.bilibili.com/",
             url,
         ]
     
