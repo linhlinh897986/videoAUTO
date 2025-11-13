@@ -6,13 +6,14 @@ import { InteractionHandlers } from '../../hooks/useTimelineInteraction';
 interface TimelineItemProps {
     subtitle: SubtitleBlock;
     duration: number; // This is now scaledDuration
+    timelineWidthPx: number; // Width of timeline in pixels
     getInteractionHandlers: (type: 'subtitle' | 'resize-start' | 'resize-end', id: number) => InteractionHandlers;
     isSelected: boolean;
     onSelect: (id: number, e: React.MouseEvent) => void;
     adjustTimeForSegments: (sourceTime: number) => number;
 }
 
-const TimelineItem: React.FC<TimelineItemProps> = ({ subtitle, duration, getInteractionHandlers, isSelected, onSelect, adjustTimeForSegments }) => {
+const TimelineItem: React.FC<TimelineItemProps> = ({ subtitle, duration, timelineWidthPx, getInteractionHandlers, isSelected, onSelect, adjustTimeForSegments }) => {
     const startSource = srtTimeToSeconds(subtitle.startTime);
     const endSource = srtTimeToSeconds(subtitle.endTime);
     
@@ -20,13 +21,13 @@ const TimelineItem: React.FC<TimelineItemProps> = ({ subtitle, duration, getInte
     const start = adjustTimeForSegments(startSource);
     const end = adjustTimeForSegments(endSource);
     
-    const left = (start / duration) * 100;
-    const width = ((end - start) / duration) * 100;
+    const leftPx = duration > 0 ? (start / duration) * timelineWidthPx : 0;
+    const widthPx = duration > 0 ? ((end - start) / duration) * timelineWidthPx : 0;
 
     return (
         <div 
             className={`timeline-item absolute h-10 bg-yellow-900/80 rounded border-2 flex items-center justify-center p-1 cursor-grab active:cursor-grabbing transition-colors ${isSelected ? 'border-yellow-400 shadow-lg shadow-yellow-500/20' : 'border-yellow-700 hover:border-yellow-500'}`} 
-            style={{ left: `${left}%`, width: `${width}%`, top: `4px`}} // 4px for vertical padding inside track
+            style={{ left: `${leftPx}px`, width: `${widthPx}px`, top: `4px`}} // 4px for vertical padding inside track
             onClick={(e) => { e.stopPropagation(); onSelect(subtitle.id, e); }}
             onMouseDown={getInteractionHandlers('subtitle', subtitle.id).onMouseDown}
         >

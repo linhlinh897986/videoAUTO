@@ -8,21 +8,22 @@ interface AudioTrackItemProps {
     audioFile: AudioFile;
     audioUrl: string | null;
     timelineVisualDuration: number;
+    timelineWidthPx: number;
     getInteractionHandlers: (type: 'audio', id: string) => InteractionHandlers;
     isSelected: boolean;
     onSelect: (id: string, e: React.MouseEvent) => void;
     adjustTimeForSegments: (sourceTime: number) => number;
 }
 
-const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, timelineVisualDuration, getInteractionHandlers, isSelected, onSelect, adjustTimeForSegments }) => {
+const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, timelineVisualDuration, timelineWidthPx, getInteractionHandlers, isSelected, onSelect, adjustTimeForSegments }) => {
     const { duration = 0, startTime = 0, name } = audioFile;
     if (duration <= 0 || timelineVisualDuration <= 0) return null;
     
     // Adjust audio start position based on video segment playback rates (same as subtitles)
     const adjustedStartTime = adjustTimeForSegments(startTime);
     
-    const left = (adjustedStartTime / timelineVisualDuration) * 100;
-    const width = (duration / timelineVisualDuration) * 100;  // Keep original duration
+    const leftPx = (adjustedStartTime / timelineVisualDuration) * timelineWidthPx;
+    const widthPx = (duration / timelineVisualDuration) * timelineWidthPx;  // Keep original duration
 
     return (
         <div
@@ -31,7 +32,7 @@ const AudioTrackItem: React.FC<AudioTrackItemProps> = ({ audioFile, audioUrl, ti
                     ? 'bg-purple-700/90 border-purple-400 shadow-lg shadow-purple-500/20' 
                     : 'bg-purple-900/80 border-purple-700 hover:border-purple-500'
             }`}
-            style={{ left: `${left}%`, width: `${width}%`, top: '4px' }}
+            style={{ left: `${leftPx}px`, width: `${widthPx}px`, top: '4px' }}
             onClick={(e) => { e.stopPropagation(); onSelect(audioFile.id, e); }}
             onMouseDown={getInteractionHandlers('audio', audioFile.id).onMouseDown}
         >

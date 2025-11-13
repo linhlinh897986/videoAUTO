@@ -5,7 +5,7 @@ import TrackHeader from './TrackHeader';
 import Waveform from './Waveform';
 import AudioTrackItem from './AudioTrackItem';
 import useTimelineInteraction from '../../hooks/useTimelineInteraction';
-import { TRACK_HEIGHT, RULER_HEIGHT } from '../../constants';
+import { TRACK_HEIGHT, RULER_HEIGHT, PIXELS_PER_SECOND } from '../../constants';
 import { FilmIcon, EyeIcon, EyeSlashIcon, SpeakerWaveIcon, SpeakerXMarkIcon } from '../ui/Icons';
 import { EditorState } from '../views/ProfessionalVideoEditor';
 import { getVideoUrl, getFileUrl } from '../../services/projectService';
@@ -65,6 +65,18 @@ const Timeline: React.FC<TimelineProps> = (props) => {
     const timelineContainerRef = useRef<HTMLDivElement>(null);
     const contentWrapperRef = useRef<HTMLDivElement>(null);
     const headerWrapperRef = useRef<HTMLDivElement>(null);
+    
+    // Calculate timeline width in pixels (instead of percentage)
+    // This ensures that long videos remain usable by providing consistent pixel density
+    const timelineWidthPx = useMemo(() => {
+        return timelineVisualDuration * PIXELS_PER_SECOND * zoom;
+    }, [timelineVisualDuration, zoom]);
+    
+    // Helper function to convert timeline time to pixel position
+    const timeToPixels = useCallback((time: number): number => {
+        if (timelineVisualDuration === 0) return 0;
+        return (time / timelineVisualDuration) * timelineWidthPx;
+    }, [timelineVisualDuration, timelineWidthPx]);
     
     // Helper function to convert source time to visual time considering playback rates
     const adjustTimeForSegments = useMemo(() => {
@@ -141,7 +153,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
     useEffect(() => {
       if (timelineContainerRef.current && contentWrapperRef.current && timelineVisualDuration > 0 && isPlaying) {
         const containerEl = timelineContainerRef.current;
-        const playheadPos = (currentTime / timelineVisualDuration) * contentWrapperRef.current.scrollWidth;
+        const playheadPos = (currentTime / timelineVisualDuration) * timelineWidthPx;
         const visibleStart = containerEl.scrollLeft;
         const visibleEnd = containerEl.scrollLeft + containerEl.clientWidth;
         const buffer = containerEl.clientWidth * 0.2;
@@ -152,7 +164,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
             });
         }
       }
-    }, [currentTime, timelineVisualDuration, zoom, isPlaying]);
+    }, [currentTime, timelineVisualDuration, zoom, isPlaying, timelineWidthPx]);
 
     const prevZoom = usePrevious(zoom);
 
@@ -166,15 +178,13 @@ const Timeline: React.FC<TimelineProps> = (props) => {
         
         const playheadTime = currentTime;
         
-        const newContentWidth = containerWidth * zoom;
-        
-        const playheadPx = (playheadTime / timelineVisualDuration) * newContentWidth;
+        const playheadPx = (playheadTime / timelineVisualDuration) * timelineWidthPx;
 
         const newScrollLeft = playheadPx - (containerWidth / 2);
 
         container.scrollLeft = newScrollLeft;
 
-    }, [zoom, prevZoom, currentTime, timelineVisualDuration, isPlaying, timelineContainerRef]);
+    }, [zoom, prevZoom, currentTime, timelineVisualDuration, isPlaying, timelineContainerRef, timelineWidthPx]);
 
 
     const handleTimelineClick = (e: React.MouseEvent) => {
@@ -230,7 +240,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                 <div 
                     ref={contentWrapperRef}
                     className="relative" 
-                    style={{ width: `${zoom * 100}%`, minHeight: '100%' }} 
+                    style={{ width: `${timelineWidthPx}px`, minHeight: '100%' }} 
                 >
                     <div style={{ height: RULER_HEIGHT }} className="border-b border-gray-700 sticky top-0 left-0 right-0 z-20 bg-gray-800/80 backdrop-blur-sm" onMouseDown={getInteractionHandlers('ruler').onMouseDown}>
                         {timelineVisualDuration > 0 && (() => {
@@ -250,7 +260,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                                 if (time > timelineVisualDuration + 1) continue;
                                 
                                 ticks.push(
-                                    <div key={time} className="absolute h-full" style={{ left: `${(time / timelineVisualDuration) * 100}%` }}>
+                                    <div key={time} className="absolute h-full" style={{ left: `${timeToPixels(time)}px` }}>
                                         <div className="w-px h-2 bg-gray-500"></div>
                                         <span className="text-xs text-gray-500 absolute top-2 left-1">{formatRulerTime(time)}</span>
                                     </div>
@@ -273,8 +283,8 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                             return videoFile.segments.map((segment) => {
                                 const rate = segment.playbackRate || 1;
                                 const segmentVisualDuration = (segment.sourceEndTime - segment.sourceStartTime) / rate;
-                                const left = (accumulatedVisualDuration / timelineVisualDuration) * 100;
-                                const width = (segmentVisualDuration / timelineVisualDuration) * 100;
+                                const leftPx = timeToPixels(accumulatedVisualDuration);
+                                const widthPx = timeToPixels(segmentVisualDuration);
                                 accumulatedVisualDuration += segmentVisualDuration;
 
                                 const isSelected = selectedSegmentIds.includes(segment.id);
@@ -286,7 +296,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                                         className={`video-segment-item absolute h-10 bg-cyan-900/80 rounded border-2 flex items-center p-2 cursor-pointer transition-all duration-100
                                             ${isSelected ? 'border-yellow-400 shadow-lg shadow-yellow-500/20' : 'border-cyan-700 hover:border-cyan-500'}
                                         `}
-                                        style={{ left: `${left}%`, width: `${width}%`, top: `4px`}}
+                                        style={{ left: `${leftPx}px`, width: `${widthPx}px`, top: `4px`}}
                                         title={videoFile.name}
                                     >
                                         <FilmIcon className="w-4 h-4 text-cyan-300 mr-2 flex-shrink-0" />
@@ -308,12 +318,12 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                              return videoFile.segments.map((segment) => {
                                 const rate = segment.playbackRate || 1;
                                 const segmentVisualDuration = (segment.sourceEndTime - segment.sourceStartTime) / rate;
-                                const left = (accumulatedVisualDuration / timelineVisualDuration) * 100;
-                                const width = (segmentVisualDuration / timelineVisualDuration) * 100;
+                                const leftPx = timeToPixels(accumulatedVisualDuration);
+                                const widthPx = timeToPixels(segmentVisualDuration);
                                 accumulatedVisualDuration += segmentVisualDuration;
                                 
                                 return (
-                                    <div key={segment.id} className="absolute h-full" style={{ left: `${left}%`, width: `${width}%` }}>
+                                    <div key={segment.id} className="absolute h-full" style={{ left: `${leftPx}px`, width: `${widthPx}px` }}>
                                         <Waveform 
                                             videoUrl={props.videoUrl} 
                                             sourceStartTime={segment.sourceStartTime}
@@ -343,6 +353,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                                     audioFile={audioFile}
                                     audioUrl={audioUrls.get(audioFile.id) || null}
                                     timelineVisualDuration={timelineVisualDuration}
+                                    timelineWidthPx={timelineWidthPx}
                                     getInteractionHandlers={getInteractionHandlers}
                                     isSelected={selectedAudioIds.includes(audioFile.id)}
                                     onSelect={onSelectAudio}
@@ -358,6 +369,7 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                                 key={i}
                                 trackIndex={i}
                                 duration={timelineVisualDuration}
+                                timelineWidthPx={timelineWidthPx}
                                 subtitles={props.subtitles.filter(s => (s.track ?? 0) === i)}
                                 getInteractionHandlers={getInteractionHandlers}
                                 selectedSubtitleIds={selectedSubtitleIds}
@@ -370,14 +382,14 @@ const Timeline: React.FC<TimelineProps> = (props) => {
                     {snapLinePosition !== null && (
                         <div 
                             className="absolute top-0 bottom-0 w-px bg-yellow-400 z-35 pointer-events-none"
-                            style={{ left: `${(snapLinePosition / timelineVisualDuration) * 100}%` }}
+                            style={{ left: `${timeToPixels(snapLinePosition)}px` }}
                         />
                     )}
 
                     {timelineVisualDuration > 0 && (
                         <div 
                             className="playhead absolute top-0 bottom-0 w-0.5 bg-red-500 z-30 group" 
-                            style={{ left: `${(currentTime / timelineVisualDuration) * 100}%` }}
+                            style={{ left: `${timeToPixels(currentTime)}px` }}
                             onMouseDown={getInteractionHandlers('playhead').onMouseDown}
                         >
                             <div className="absolute -top-1 -left-1.5 w-4 h-4 rounded-full bg-red-500 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity" />

@@ -7,6 +7,7 @@ export const TRACK_HEIGHT = 48; // px, height of a single subtitle track
 export const RULER_HEIGHT = 24; // px, height of the time ruler
 export const VIDEO_TRACK_HEIGHT = 48; // px, height of the video track in timeline
 export const WAVEFORM_TRACK_HEIGHT = 80; // px, height of the waveform track in timeline
+export const PIXELS_PER_SECOND = 10; // px, base scale for timeline - each second takes 10px at zoom=1
 
 
 export const PRESET_STYLES = [

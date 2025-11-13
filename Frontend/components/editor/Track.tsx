@@ -7,6 +7,7 @@ import { TRACK_HEIGHT } from '../../constants';
 interface TrackProps {
     trackIndex: number;
     duration: number;
+    timelineWidthPx: number;
     subtitles: SubtitleBlock[];
     getInteractionHandlers: (type: 'subtitle' | 'resize-start' | 'resize-end', id: number) => InteractionHandlers;
     selectedSubtitleIds: number[];
@@ -14,7 +15,7 @@ interface TrackProps {
     adjustTimeForSegments: (sourceTime: number) => number;
 }
 
-const Track: React.FC<TrackProps> = ({ trackIndex, duration, subtitles, getInteractionHandlers, selectedSubtitleIds, onSelectSubtitle, adjustTimeForSegments }) => {
+const Track: React.FC<TrackProps> = ({ trackIndex, duration, timelineWidthPx, subtitles, getInteractionHandlers, selectedSubtitleIds, onSelectSubtitle, adjustTimeForSegments }) => {
     return (
         <div 
             className="absolute w-full"
@@ -29,6 +30,7 @@ const Track: React.FC<TrackProps> = ({ trackIndex, duration, subtitles, getInter
                     key={sub.id}
                     subtitle={sub}
                     duration={duration}
+                    timelineWidthPx={timelineWidthPx}
                     isSelected={selectedSubtitleIds.includes(sub.id)}
                     getInteractionHandlers={getInteractionHandlers}
                     onSelect={onSelectSubtitle}
