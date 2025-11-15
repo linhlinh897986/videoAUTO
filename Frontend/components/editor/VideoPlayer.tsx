@@ -545,6 +545,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <video 
                     ref={videoRef}
                     src={videoUrl ?? undefined}
+                    crossOrigin="anonymous"
                     onLoadedMetadata={() => {
                         onLoadedMetadata();
                         updatePlayerSize();
@@ -553,6 +554,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     onPlay={handlePlay}
                     onPause={handlePause}
                     playsInline
+                    preload="metadata"
                     style={{ display: 'none' }}
                 />
 

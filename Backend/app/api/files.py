@@ -54,6 +54,9 @@ def download_file(file_id: str, request: Request) -> Response:
     
     file_path, content_type, filename, file_size = file_info
     
+    # Ensure content_type is set for binary streaming
+    media_type = content_type or "application/octet-stream"
+    
     # If file is not on disk (legacy blob storage), fall back to old method
     if file_path is None or not file_path.exists():
         stored = db.get_file(file_id)
@@ -61,6 +64,7 @@ def download_file(file_id: str, request: Request) -> Response:
             raise HTTPException(status_code=404, detail="File not found")
         data, content_type, filename = stored
         file_size = len(data)
+        media_type = content_type or "application/octet-stream"
         
         # Handle range request for blob data
         range_header = request.headers.get("range")
@@ -71,72 +75,98 @@ def download_file(file_id: str, request: Request) -> Response:
                 start = int(range_parts[0]) if range_parts[0] else 0
                 end = int(range_parts[1]) if len(range_parts) > 1 and range_parts[1] else file_size - 1
                 
-                if start >= file_size or end >= file_size or start > end:
-                    raise HTTPException(status_code=416, detail="Requested range not satisfiable")
+                # Clamp end to file size
+                end = min(end, file_size - 1)
+                
+                if start >= file_size or start < 0 or start > end:
+                    raise HTTPException(
+                        status_code=416, 
+                        detail="Requested range not satisfiable",
+                        headers={"Content-Range": f"bytes */{file_size}"}
+                    )
                 
                 chunk = data[start:end + 1]
                 headers = {
                     "Content-Range": f"bytes {start}-{end}/{file_size}",
                     "Accept-Ranges": "bytes",
                     "Content-Length": str(len(chunk)),
-                    "Content-Type": content_type or "application/octet-stream",
+                    "Content-Type": media_type,
+                    "Cache-Control": "public, max-age=3600",
                 }
-                return Response(content=chunk, status_code=206, headers=headers)
-            except (ValueError, IndexError):
-                raise HTTPException(status_code=400, detail="Invalid range header")
+                return Response(content=chunk, status_code=206, headers=headers, media_type=media_type)
+            except (ValueError, IndexError) as e:
+                raise HTTPException(status_code=400, detail=f"Invalid range header: {e}")
         
         # Return full blob
         headers = {
             "Accept-Ranges": "bytes",
             "Content-Length": str(file_size),
-            "Content-Type": content_type or "application/octet-stream",
+            "Content-Type": media_type,
+            "Cache-Control": "public, max-age=3600",
         }
-        return Response(content=data, headers=headers)
+        return Response(content=data, headers=headers, media_type=media_type)
     
     # File is on disk - use efficient streaming
-    media_type = content_type or "application/octet-stream"
     range_header = request.headers.get("range")
     
     if range_header:
         # Parse range header (format: "bytes=start-end")
         try:
-            range_str = range_header.replace("bytes=", "")
+            range_str = range_header.replace("bytes=", "").strip()
             range_parts = range_str.split("-")
             start = int(range_parts[0]) if range_parts[0] else 0
             end = int(range_parts[1]) if len(range_parts) > 1 and range_parts[1] else file_size - 1
             
+            # Clamp end to file size
+            end = min(end, file_size - 1)
+            
             # Validate range
-            if start >= file_size or end >= file_size or start > end:
-                raise HTTPException(status_code=416, detail="Requested range not satisfiable")
+            if start >= file_size or start < 0 or start > end:
+                raise HTTPException(
+                    status_code=416,
+                    detail="Requested range not satisfiable",
+                    headers={"Content-Range": f"bytes */{file_size}"}
+                )
             
-            # Read only the requested chunk from disk
+            # Read only the requested chunk from disk in binary mode
             chunk_size = end - start + 1
-            with open(file_path, "rb") as f:
-                f.seek(start)
-                chunk = f.read(chunk_size)
-            
-            headers = {
-                "Content-Range": f"bytes {start}-{end}/{file_size}",
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(len(chunk)),
-                "Content-Type": media_type,
-            }
-            
-            return Response(content=chunk, status_code=206, headers=headers, media_type=media_type)
+            try:
+                with open(file_path, "rb") as f:
+                    f.seek(start)
+                    chunk = f.read(chunk_size)
+                
+                # Verify we got the expected amount of data
+                actual_size = len(chunk)
+                if actual_size != chunk_size:
+                    # Adjust end to actual bytes read
+                    end = start + actual_size - 1
+                
+                headers = {
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(actual_size),
+                    "Content-Type": media_type,
+                    "Cache-Control": "public, max-age=3600",
+                }
+                
+                return Response(content=chunk, status_code=206, headers=headers, media_type=media_type)
+            except OSError as e:
+                raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
         except (ValueError, IndexError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid range header: {e}")
-        except OSError as e:
-            raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
     
     # No range requested - use FileResponse for efficient full file streaming
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(file_size),
+        "Content-Type": media_type,
+        "Cache-Control": "public, max-age=3600",
     }
     return FileResponse(
         path=file_path,
         media_type=media_type,
         headers=headers,
+        filename=filename,
     )
 
 
