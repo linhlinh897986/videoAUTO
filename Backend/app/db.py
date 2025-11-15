@@ -218,6 +218,29 @@ class Database:
 
         return storage_path, file_size
 
+    def get_file_path(self, file_id: str) -> Optional[Tuple[Path, Optional[str], str, int]]:
+        """Get file path, content type, filename, and size without loading content into memory.
+        Returns: (file_path, content_type, filename, file_size) or None if not found.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT storage_path, content_type, filename, file_size FROM files WHERE id = ?",
+                (file_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        
+        storage_path = row["storage_path"]
+        if storage_path:
+            path = Path(storage_path)
+            if path.exists():
+                file_size = row["file_size"] or path.stat().st_size
+                return path, row["content_type"], row["filename"], file_size
+        
+        # Fallback: file stored in DB blob - need to return size
+        # In this case, we must load to get size, but this is for legacy data
+        return None, row["content_type"], row["filename"], 0
+
     def get_file(self, file_id: str) -> Optional[Tuple[bytes, Optional[str], str]]:
         with self._connect() as conn:
             row = conn.execute(
