@@ -196,6 +196,9 @@ class Database:
         """
         Save file using streaming to handle large files efficiently.
         For videos, data is stored only on disk (not in SQLite BLOB).
+        Raises:
+            ValueError: If file_id is empty
+            IOError: If file cannot be written to disk
         """
         if not file_id:
             raise ValueError("File ID must be provided")
@@ -210,16 +213,26 @@ class Database:
         # Stream file to disk in chunks
         chunk_size = 8 * 1024 * 1024  # 8MB chunks
         file_size = 0
-        with open(storage_path, 'wb') as f:
-            while chunk := file_stream.read(chunk_size):
-                f.write(chunk)
-                file_size += len(chunk)
+        try:
+            with open(storage_path, 'wb') as f:
+                while chunk := file_stream.read(chunk_size):
+                    f.write(chunk)
+                    file_size += len(chunk)
+        except IOError as e:
+            # Clean up partial file if write failed
+            if storage_path.exists():
+                storage_path.unlink()
+            raise IOError(f"Failed to write file to disk: {e}")
         
         # For videos, don't store in BLOB (NULL). For small files, read and store.
         data_blob = None
         if not is_video:
             # For small files like audio/subtitles, also store in BLOB for backward compatibility
-            data_blob = storage_path.read_bytes()
+            try:
+                data_blob = storage_path.read_bytes()
+            except IOError:
+                # If we can't read it back, still proceed (file is on disk)
+                pass
 
         with self._connect() as conn:
             conn.execute(

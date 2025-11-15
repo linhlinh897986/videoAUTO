@@ -67,9 +67,15 @@ def download_file(file_id: str):
     
     # Use streaming for videos and large files
     if storage_path and is_video:
+        from pathlib import Path
+        storage_file = Path(storage_path)
+        
+        if not storage_file.exists():
+            raise HTTPException(status_code=404, detail="Video file not found on disk")
+        
         def iterfile():
             chunk_size = 8 * 1024 * 1024  # 8MB chunks
-            with open(storage_path, mode="rb") as file_like:
+            with open(storage_file, mode="rb") as file_like:
                 while chunk := file_like.read(chunk_size):
                     yield chunk
         
