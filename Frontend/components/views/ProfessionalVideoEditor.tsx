@@ -155,12 +155,11 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
   }, [isResizing, handleMouseMove, handleMouseUp]);
   
   useEffect(() => {
-    let objectUrl: string | null = null;
     const loadVideo = async () => {
       setIsLoading(true);
       try {
-        objectUrl = await getVideoUrl(videoFile.id);
-        setVideoUrl(objectUrl);
+        const url = await getVideoUrl(videoFile.id);
+        setVideoUrl(url);
       } catch (error) {
         console.error("Lỗi khi tải video cho trình chỉnh sửa:", error);
       } finally {
@@ -168,7 +167,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
       }
     };
     loadVideo();
-    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    // No cleanup needed - using direct URL instead of blob URL
   }, [videoFile.id]);
   
   const handleUpdateSubtitle = (id: number, newSub: Partial<SubtitleBlock>) => {
@@ -604,12 +603,8 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         audio.src = '';
         audioMap.delete(id);
         
-        // Revoke the URL when removing audio
-        const url = urlMap.get(id);
-        if (url) {
-          URL.revokeObjectURL(url);
-          urlMap.delete(id);
-        }
+        // Remove URL when removing audio (no need to revoke - using direct URLs)
+        urlMap.delete(id);
       }
     }
     
@@ -627,10 +622,6 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
         try {
           const audioUrl = await getFileUrl(audioFile.id);
           if (cancelled) {
-            // Clean up the blob URL if component unmounted
-            if (audioUrl) {
-              URL.revokeObjectURL(audioUrl);
-            }
             break;
           }
           
@@ -650,7 +641,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
             });
             
             audioMap.set(audioFile.id, audio);
-            urlMap.set(audioFile.id, audioUrl); // Store URL for later cleanup
+            urlMap.set(audioFile.id, audioUrl); // Store URL
             newUrls.set(audioFile.id, audioUrl); // Add to new URLs map
             hasNewUrls = true;
           }
@@ -672,7 +663,7 @@ const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ proje
     
     return () => {
       cancelled = true;
-      // Note: Don't clear or revoke on every effect run, only when component unmounts
+      // Note: Don't clear on every effect run, only when component unmounts
       // This prevents the audio from breaking when audioFiles array is recreated
     };
   }, [audioFiles]);
@@ -1188,7 +1179,7 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
   // Cleanup effect on component unmount
   useEffect(() => {
     return () => {
-      // Clean up all audio elements and URLs
+      // Clean up all audio elements
       const audioMap = audioElementsRef.current;
       const urlMap = audioUrlsRef.current;
       
@@ -1198,9 +1189,7 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
       }
       audioMap.clear();
       
-      for (const url of urlMap.values()) {
-        URL.revokeObjectURL(url);
-      }
+      // No need to revoke URLs - using direct URLs instead of blob URLs
       urlMap.clear();
       
       playingAudioRef.current.clear();

@@ -99,7 +99,8 @@ export const saveVideo = async (projectId: string, id: string, file: File): Prom
 };
 
 export const getVideoUrl = async (id: string): Promise<string | null> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}`);
+    // Check if file exists first
+    const response = await fetch(`${API_BASE_URL}/files/${id}/info`);
     if (response.status === 404) {
         return null;
     }
@@ -109,8 +110,8 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
         throw new Error(message || `Failed to load file ${id}`);
     }
 
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    // Return direct URL to enable HTTP Range requests for video streaming
+    return `${API_BASE_URL}/files/${id}`;
 };
 
 // Alias for getVideoUrl - works for any file type (video, audio, etc.)
