@@ -148,11 +148,25 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
-    video_data_tuple = db.get_file(payload.video_file_id)
-    if video_data_tuple is None:
+    # Get file metadata to check if video exists and get storage path
+    file_metadata = db.get_file_metadata(payload.video_file_id)
+    if file_metadata is None:
         raise HTTPException(status_code=404, detail=f"Video file not found: {payload.video_file_id}")
-
-    video_data, _content_type, filename = video_data_tuple
+    
+    storage_path = file_metadata.get("storage_path")
+    filename = file_metadata.get("filename", "video.mp4")
+    
+    # For videos, prefer reading from storage_path directly to avoid loading large files in memory
+    if storage_path and Path(storage_path).exists():
+        input_video_path = Path(storage_path)
+    else:
+        # Fallback to get_file for backward compatibility or small files
+        video_data_tuple = db.get_file(payload.video_file_id)
+        if video_data_tuple is None:
+            raise HTTPException(status_code=404, detail=f"Video file not found: {payload.video_file_id}")
+        video_data, _content_type, filename = video_data_tuple
+        # Will write to temp later
+        input_video_path = None
 
     ffmpeg_path = shutil.which("ffmpeg")
     if not ffmpeg_path:
@@ -167,8 +181,12 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
 
-        input_video = temp_path / f"input{Path(filename).suffix}"
-        input_video.write_bytes(video_data)
+        # Use storage path directly if available, otherwise write from memory
+        if input_video_path:
+            input_video = input_video_path
+        else:
+            input_video = temp_path / f"input{Path(filename).suffix}"
+            input_video.write_bytes(video_data)
 
         subtitle_file = None
         if payload.subtitles and len(payload.subtitles) > 0:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, BinaryIO, Dict, Iterable, List, Optional, Tuple
 
 
 class Database:
@@ -49,10 +49,11 @@ class Database:
                     project_id TEXT,
                     filename TEXT NOT NULL,
                     content_type TEXT,
-                    data BLOB NOT NULL,
+                    data BLOB,
                     created_at TEXT NOT NULL,
                     storage_path TEXT,
                     file_size INTEGER,
+                    is_video INTEGER DEFAULT 0,
                     FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
                 );
 
@@ -99,6 +100,11 @@ class Database:
 
         _add_column("storage_path", "TEXT")
         _add_column("file_size", "INTEGER")
+        _add_column("is_video", "INTEGER DEFAULT 0")
+        
+        # Make data BLOB nullable for videos (they are stored on disk only)
+        # Note: SQLite doesn't support modifying column constraints directly
+        # New rows will have NULL data for videos
         
         # Ensure scanned_videos table has downloaded column
         try:
@@ -177,6 +183,64 @@ class Database:
             conn.commit()
 
     # --- Files ---------------------------------------------------------------------
+    def save_file_streaming(
+        self,
+        file_id: str,
+        project_id: Optional[str],
+        filename: str,
+        content_type: Optional[str],
+        file_stream: BinaryIO,
+        created_at: str,
+        is_video: bool = False,
+    ) -> Tuple[Path, int]:
+        """
+        Save file using streaming to handle large files efficiently.
+        For videos, data is stored only on disk (not in SQLite BLOB).
+        """
+        if not file_id:
+            raise ValueError("File ID must be provided")
+
+        # Persist file on disk: data/{project_id}/files/{filename}
+        safe_filename = Path(filename).name
+        project_folder = project_id or "unassigned"
+        target_dir = self._data_root / project_folder / "files"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        storage_path = target_dir / safe_filename
+        
+        # Stream file to disk in chunks
+        chunk_size = 8 * 1024 * 1024  # 8MB chunks
+        file_size = 0
+        with open(storage_path, 'wb') as f:
+            while chunk := file_stream.read(chunk_size):
+                f.write(chunk)
+                file_size += len(chunk)
+        
+        # For videos, don't store in BLOB (NULL). For small files, read and store.
+        data_blob = None
+        if not is_video:
+            # For small files like audio/subtitles, also store in BLOB for backward compatibility
+            data_blob = storage_path.read_bytes()
+
+        with self._connect() as conn:
+            conn.execute(
+                "REPLACE INTO files (id, project_id, filename, content_type, data, created_at, storage_path, file_size, is_video)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    file_id,
+                    project_id,
+                    filename,
+                    content_type,
+                    data_blob,
+                    created_at,
+                    str(storage_path),
+                    file_size,
+                    1 if is_video else 0,
+                ),
+            )
+            conn.commit()
+
+        return storage_path, file_size
+
     def save_file(
         self,
         file_id: str,
@@ -236,7 +300,7 @@ class Database:
     def get_file_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, project_id, filename, content_type, created_at, storage_path, file_size"
+                "SELECT id, project_id, filename, content_type, created_at, storage_path, file_size, is_video"
                 " FROM files WHERE id = ?",
                 (file_id,),
             ).fetchone()
@@ -250,6 +314,7 @@ class Database:
             "created_at": row["created_at"],
             "storage_path": row["storage_path"],
             "file_size": row["file_size"],
+            "is_video": bool(row["is_video"]) if row["is_video"] is not None else False,
         }
 
     def delete_file(self, file_id: str) -> None:

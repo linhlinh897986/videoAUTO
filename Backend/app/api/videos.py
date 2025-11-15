@@ -61,17 +61,19 @@ async def import_videos_from_folder(project_id: str) -> Dict[str, Any]:
         try:
             file_id = f"video-{project_id}-{dt.datetime.utcnow().timestamp()}-{video_file.stem}"
 
-            video_data = video_file.read_bytes()
-
             created_at = dt.datetime.utcnow().isoformat()
-            storage_path, file_size = db.save_file(
-                file_id=file_id,
-                project_id=project_id,
-                filename=video_file.name,
-                content_type="video/mp4" if video_file.suffix.lower() == ".mp4" else "video/*",
-                data=video_data,
-                created_at=created_at,
-            )
+            
+            # Use streaming to save video file without loading it entirely in memory
+            with open(video_file, 'rb') as video_stream:
+                storage_path, file_size = db.save_file_streaming(
+                    file_id=file_id,
+                    project_id=project_id,
+                    filename=video_file.name,
+                    content_type="video/mp4" if video_file.suffix.lower() == ".mp4" else "video/*",
+                    file_stream=video_stream,
+                    created_at=created_at,
+                    is_video=True,
+                )
 
             imported_videos.append(
                 {
