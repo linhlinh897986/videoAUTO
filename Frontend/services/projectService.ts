@@ -110,8 +110,7 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
     }
     
     if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || `Failed to load file ${id}`);
+        throw new Error(`Failed to load file ${id}: HTTP ${response.status}`);
     }
     
     return url;
