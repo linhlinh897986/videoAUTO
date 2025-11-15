@@ -99,18 +99,22 @@ export const saveVideo = async (projectId: string, id: string, file: File): Prom
 };
 
 export const getVideoUrl = async (id: string): Promise<string | null> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}`);
+    // Return direct URL for streaming support (HTTP Range requests)
+    // This allows the browser to stream video in chunks instead of loading everything into memory
+    const url = `${API_BASE_URL}/files/${id}`;
+    
+    // Verify the file exists before returning the URL
+    const response = await fetch(url, { method: 'HEAD' });
     if (response.status === 404) {
         return null;
     }
-
+    
     if (!response.ok) {
         const message = await response.text();
         throw new Error(message || `Failed to load file ${id}`);
     }
-
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    
+    return url;
 };
 
 // Alias for getVideoUrl - works for any file type (video, audio, etc.)
