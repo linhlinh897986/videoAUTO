@@ -99,18 +99,33 @@ export const saveVideo = async (projectId: string, id: string, file: File): Prom
 };
 
 export const getVideoUrl = async (id: string): Promise<string | null> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}`);
+    // First check if file exists
+    const response = await fetch(`${API_BASE_URL}/files/${id}/info`);
     if (response.status === 404) {
         return null;
     }
 
     if (!response.ok) {
         const message = await response.text();
-        throw new Error(message || `Failed to load file ${id}`);
+        throw new Error(message || `Failed to check file ${id}`);
     }
 
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    const metadata = await response.json();
+    const isVideo = metadata.is_video || false;
+
+    // For videos, return direct URL to enable browser's native streaming
+    // For other files (audio, images), use blob URL for compatibility
+    if (isVideo) {
+        return `${API_BASE_URL}/files/${id}`;
+    } else {
+        // For non-video files, still use blob (for backward compatibility)
+        const fileResponse = await fetch(`${API_BASE_URL}/files/${id}`);
+        if (!fileResponse.ok) {
+            throw new Error(`Failed to load file ${id}`);
+        }
+        const blob = await fileResponse.blob();
+        return URL.createObjectURL(blob);
+    }
 };
 
 // Alias for getVideoUrl - works for any file type (video, audio, etc.)
