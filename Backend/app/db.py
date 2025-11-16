@@ -189,17 +189,20 @@ class Database:
         if not file_id:
             raise ValueError("File ID must be provided")
 
-        # Persist file on disk: data/{project_id}/files/{filename}
-        # Use filename parameter for the actual file, sanitize it for safety
-        safe_filename = Path(filename).name
+        # Persist file on disk: data/{project_id}/files/{file_id}
+        # Use file_id (which includes timestamp) to ensure uniqueness
+        # Sanitize file_id for filesystem safety
+        safe_file_id = Path(file_id).name  # Remove any path components
         project_folder = project_id or "unassigned"
         target_dir = self._data_root / project_folder / "files"
         target_dir.mkdir(parents=True, exist_ok=True)
-        storage_path = target_dir / safe_filename
+        storage_path = target_dir / safe_file_id
         storage_path.write_bytes(data)
         file_size = storage_path.stat().st_size
 
         with self._connect() as conn:
+            # Store empty bytes in database since file is already persisted to disk
+            # This prevents SQLite from storing large video files in the database
             conn.execute(
                 "REPLACE INTO files (id, project_id, filename, content_type, data, created_at, storage_path, file_size)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -208,7 +211,7 @@ class Database:
                     project_id,
                     filename,
                     content_type,
-                    data,
+                    b"",  # Empty bytes - file content is on disk
                     created_at,
                     str(storage_path),
                     file_size,

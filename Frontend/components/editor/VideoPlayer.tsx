@@ -553,6 +553,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     onPlay={handlePlay}
                     onPause={handlePause}
                     playsInline
+                    preload="metadata"
                     style={{ display: 'none' }}
                 />
 
