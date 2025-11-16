@@ -3,8 +3,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.core import db
@@ -45,14 +45,56 @@ async def upload_file(
 
 
 @router.get("/{file_id}")
-def download_file(file_id: str) -> Response:
+def download_file(file_id: str, request: Request) -> Response:
     stored = db.get_file(file_id)
     if stored is None:
         raise HTTPException(status_code=404, detail="File not found")
 
     data, content_type, filename = stored
     media_type = content_type or "application/octet-stream"
+    
+    # Enable range requests for video streaming (large files)
+    # This allows seeking in video player without loading entire file
+    is_video = content_type and content_type.startswith('video/')
+    
+    # Check if client supports range requests
+    range_header = request.headers.get('range')
+    
+    if is_video and range_header:
+        # Parse range header (e.g., "bytes=0-1023")
+        try:
+            range_str = range_header.replace('bytes=', '')
+            range_start, range_end = range_str.split('-')
+            start = int(range_start) if range_start else 0
+            end = int(range_end) if range_end else len(data) - 1
+            
+            # Ensure valid range
+            if start >= len(data):
+                raise HTTPException(status_code=416, detail="Range not satisfiable")
+            
+            end = min(end, len(data) - 1)
+            chunk = data[start:end + 1]
+            
+            headers = {
+                "Content-Range": f"bytes {start}-{end}/{len(data)}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(len(chunk)),
+                "Content-Type": media_type,
+            }
+            
+            return Response(content=chunk, status_code=206, headers=headers, media_type=media_type)
+        except (ValueError, IndexError):
+            # Invalid range format, fall back to full response
+            pass
+    
+    # For non-video files or no range request, return full content
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    
+    # Add Accept-Ranges header for video files to enable seeking
+    if is_video:
+        headers["Accept-Ranges"] = "bytes"
+        headers["Content-Length"] = str(len(data))
+    
     return Response(content=data, media_type=media_type, headers=headers)
 
 

@@ -2,6 +2,8 @@
 
 ## Để sử dụng tính năng tải video (To use the video download feature)
 
+**Note**: For handling large videos (several hours long), please also see [LARGE_VIDEO_GUIDE.md](LARGE_VIDEO_GUIDE.md) for optimization tips and best practices.
+
 ### Thiết lập Cục bộ (Local Setup)
 
 #### 1. Khởi động Backend Server (Start Backend Server)

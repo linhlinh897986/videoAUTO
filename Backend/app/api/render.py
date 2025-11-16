@@ -144,6 +144,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 @router.post("/projects/{project_id}/render")
 async def render_video(project_id: str, payload: VideoRenderRequest = Body(...)) -> Dict[str, Any]:
+    """
+    Render video with subtitles, audio tracks, and effects.
+    
+    Optimized for large videos:
+    - Uses temporary directory to avoid memory buildup
+    - Supports configurable timeout via RENDER_TIMEOUT_SECONDS
+    - FFmpeg processes video in streaming mode where possible
+    - Uses faststart for progressive download support
+    """
     project = db.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -168,6 +177,8 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
         temp_path = Path(temp_dir)
 
         input_video = temp_path / f"input{Path(filename).suffix}"
+        # Write video to temp file - this allows FFmpeg to stream read
+        # instead of loading entire file into memory
         input_video.write_bytes(video_data)
 
         subtitle_file = None
