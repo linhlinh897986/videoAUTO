@@ -200,6 +200,8 @@ class Database:
         file_size = storage_path.stat().st_size
 
         with self._connect() as conn:
+            # Store empty bytes in database since file is already persisted to disk
+            # This prevents SQLite from storing large video files in the database
             conn.execute(
                 "REPLACE INTO files (id, project_id, filename, content_type, data, created_at, storage_path, file_size)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -208,7 +210,7 @@ class Database:
                     project_id,
                     filename,
                     content_type,
-                    data,
+                    b"",  # Empty bytes - file content is on disk
                     created_at,
                     str(storage_path),
                     file_size,
