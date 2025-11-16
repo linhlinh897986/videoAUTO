@@ -998,7 +998,7 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
                 project.id,
                 initialVideoFile.id,
                 {
-                    numSamples: 20,
+                    numSamples: 3,
                     language: 'chi_sim',
                     maxWorkers: 8,  // Use 8 parallel workers for faster processing
                 }

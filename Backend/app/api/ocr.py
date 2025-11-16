@@ -41,7 +41,7 @@ class BoundingBox(BaseModel):
 
 class OCRAnalysisRequest(BaseModel):
     video_file_id: str
-    num_samples: int = 20
+    num_samples: int = 3
     language: str = "chi_sim"  # Default to Chinese simplified
     max_workers: int = 4  # Number of parallel OCR workers
 

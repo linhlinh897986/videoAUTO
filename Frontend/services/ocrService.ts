@@ -28,7 +28,7 @@ export interface OCRAnalysisResponse {
  * @param projectId - The project ID
  * @param videoId - The video file ID
  * @param options - Optional configuration for analysis
- * @param options.numSamples - Number of frames to sample (default: 20)
+ * @param options.numSamples - Number of frames to sample (default: 3)
  * @param options.language - Tesseract language code (default: 'chi_sim')
  * @param options.maxWorkers - Number of parallel OCR workers (default: 4)
  * @returns Promise with analysis results including bounding box if detected
@@ -44,13 +44,17 @@ export const analyzeHardcodedSubtitles = async (
 ): Promise<OCRAnalysisResponse> => {
     const requestBody: OCRAnalysisRequest = {
         video_file_id: videoId,
-        num_samples: options.numSamples ?? 20,
+        num_samples: options.numSamples ?? 3,
         language: options.language ?? 'chi_sim',
         max_workers: options.maxWorkers ?? 4,
     };
 
+    // Properly encode both project ID and video ID to handle special characters
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedVideoId = encodeURIComponent(videoId);
+
     const response = await fetch(
-        `${API_BASE_URL}/projects/${projectId}/videos/${videoId}/analyze-hardsubs`,
+        `${API_BASE_URL}/projects/${encodedProjectId}/videos/${encodedVideoId}/analyze-hardsubs`,
         {
             method: 'POST',
             headers: {
