@@ -46,6 +46,7 @@ async def upload_file(
 
 
 @router.get("/{file_id}")
+@router.head("/{file_id}")
 def download_file(file_id: str) -> Response:
     # First, try to get file metadata to check if file exists and get storage path
     metadata = db.get_file_metadata(file_id)

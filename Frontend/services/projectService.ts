@@ -110,7 +110,8 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
 
     if (!response.ok) {
         const message = await response.text();
-        throw new Error(message || `Failed to load file ${id}`);
+        console.error(`Failed to load file ${id}: ${response.status} ${response.statusText}`, message);
+        throw new Error(`${response.status} ${response.statusText}: ${message || `Failed to load file ${id}`}`);
     }
 
     // Return direct URL for streaming - browser will handle range requests
