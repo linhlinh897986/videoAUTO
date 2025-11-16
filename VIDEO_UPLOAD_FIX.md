@@ -7,6 +7,8 @@
 2. Sau khi upload, truy cập video bị lỗi 500 Internal Server Error
 3. Các file có tên tiếng Việt như "tải xuống.mp4" gặp vấn đề
 4. **MỚI**: Không thể xử lý video nặng vài GB - bị treo hoặc chạy chậm
+5. **MỚI**: File được upload nhưng không lấy được (404/500 error)
+6. **MỚI**: Upload nhiều file cùng tên bị ghi đè lên nhau
 
 ## Root Cause (Nguyên nhân gốc)
 
@@ -33,6 +35,13 @@ Tạo waveform cho audio tải toàn bộ video vào memory:
 - File > 500MB làm hết RAM
 - Trình duyệt chậm hoặc crash
 - Không cần thiết cho video rất lớn
+
+### Issue 5: File Storage Mismatch (MỚI - CRITICAL!)
+File được lưu với tên gốc thay vì file_id:
+- File_id: `"1763287619834-tải xuống.mp4"`
+- Lưu trên disk: `"tải xuống.mp4"` ❌
+- Khi lấy file bằng file_id → không tìm thấy → 500 error
+- Nhiều file cùng tên ghi đè lên nhau
 
 ## Solution (Giải pháp)
 
@@ -127,6 +136,31 @@ if (fileSizeMB > 500) {
 - Khởi động nhanh
 - Tiết kiệm bandwidth
 
+### Fix 6: Use file_id as Disk Filename (MỚI - CRITICAL!)
+**File**: `Backend/app/db.py`, save_file()
+
+```python
+# Before (Trước):
+safe_filename = Path(filename).name  # "tải xuống.mp4"
+storage_path = target_dir / safe_filename  # ❌ Dùng tên gốc
+
+# After (Sau):
+safe_file_id = Path(file_id).name  # "1763287619834-tải xuống.mp4"
+storage_path = target_dir / safe_file_id  # ✅ Dùng file_id có timestamp
+```
+
+**Kết quả**:
+- File được lưu với tên duy nhất (có timestamp)
+- Không bị ghi đè khi upload nhiều file cùng tên
+- Lấy file chính xác bằng file_id
+- Không còn lỗi 500 khi truy cập file
+
+**Tại sao quan trọng:**
+- File_id: `"1763287619834-tải xuống.mp4"` (có timestamp)
+- Tên gốc: `"tải xuống.mp4"` (không duy nhất)
+- Nếu dùng tên gốc → file mới ghi đè file cũ
+- Nếu dùng file_id → mỗi upload có file riêng ✅
+
 ## Testing (Kiểm tra)
 
 ### Test Case
@@ -139,6 +173,13 @@ if (fileSizeMB > 500) {
 - ✅ Database chỉ 60KB (không chứa video)
 - ✅ Tên file tiếng Việt hoạt động đúng
 - ✅ Truy cập video không bị lỗi 500
+- ✅ **MỚI**: Video lớn (>1GB) stream mượt mà
+- ✅ **MỚI**: Seek (tua) nhanh trên video lớn
+- ✅ **MỚI**: Waveform bỏ qua cho file >500MB
+- ✅ **MỚI**: File có ký tự đặc biệt (tiếng Trung, dấu cách) hoạt động
+- ✅ **MỚI**: Upload nhiều file cùng tên không ghi đè
+- ✅ **MỚI**: Lấy file thành công sau khi upload (không còn 500 error)
+- ✅ Không có lỗ hổng bảo mật (CodeQL scan: 0 vulnerabilities)
 - ✅ Streaming hoạt động tốt
 - ✅ **MỚI**: Video lớn (>1GB) stream mượt mà
 - ✅ **MỚI**: Seek (tua) nhanh trên video lớn
