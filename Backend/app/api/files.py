@@ -88,7 +88,22 @@ def download_file(file_id: str, request: Request) -> Response:
             pass
     
     # For non-video files or no range request, return full content
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    # Use RFC 2231 encoding for filenames with non-ASCII characters
+    # This properly handles Chinese characters and other Unicode characters
+    try:
+        # Try to encode as ASCII - if it works, use simple filename
+        filename.encode('ascii')
+        content_disposition = f'attachment; filename="{filename}"'
+    except UnicodeEncodeError:
+        # If filename contains non-ASCII chars, use RFC 2231 encoding
+        from urllib.parse import quote
+        encoded_filename = quote(filename)
+        # Use both filename and filename* for better compatibility
+        # filename with ASCII fallback, filename* with UTF-8
+        ascii_filename = filename.encode('ascii', 'ignore').decode('ascii') or 'download'
+        content_disposition = f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
+    
+    headers = {"Content-Disposition": content_disposition}
     
     # Add Accept-Ranges header for video files to enable seeking
     if is_video:
