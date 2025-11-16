@@ -126,7 +126,9 @@ export const saveVideo = async (
 };
 
 export const getVideoUrl = async (id: string): Promise<string | null> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}`);
+    // Properly encode the file ID to handle special characters (Chinese, spaces, hashtags, etc.)
+    const encodedId = encodeURIComponent(id);
+    const response = await fetch(`${API_BASE_URL}/files/${encodedId}`);
     if (response.status === 404) {
         return null;
     }
@@ -144,7 +146,9 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
 export const getFileUrl = getVideoUrl;
 
 export const deleteVideo = async (id: string): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}`, { method: 'DELETE' });
+    // Properly encode the file ID to handle special characters
+    const encodedId = encodeURIComponent(id);
+    const response = await fetch(`${API_BASE_URL}/files/${encodedId}`, { method: 'DELETE' });
     if (!response.ok && response.status !== 404) {
         const message = await response.text();
         throw new Error(message || `Failed to delete file ${id}`);
@@ -152,7 +156,9 @@ export const deleteVideo = async (id: string): Promise<void> => {
 };
 
 export const getStoredFileInfo = async (id: string): Promise<StoredFileMetadata | null> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}/info`);
+    // Properly encode the file ID to handle special characters
+    const encodedId = encodeURIComponent(id);
+    const response = await fetch(`${API_BASE_URL}/files/${encodedId}/info`);
     if (response.status === 404) {
         return null;
     }
