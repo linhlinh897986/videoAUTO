@@ -99,7 +99,10 @@ export const saveVideo = async (projectId: string, id: string, file: File): Prom
 };
 
 export const getVideoUrl = async (id: string): Promise<string | null> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}`);
+    // For large video files, return the direct URL instead of creating a blob URL
+    // This allows the browser to stream the video using range requests
+    // rather than downloading the entire file into memory
+    const response = await fetch(`${API_BASE_URL}/files/${id}`, { method: 'HEAD' });
     if (response.status === 404) {
         return null;
     }
@@ -109,8 +112,8 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
         throw new Error(message || `Failed to load file ${id}`);
     }
 
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    // Return direct URL for streaming - browser will handle range requests
+    return `${API_BASE_URL}/files/${id}`;
 };
 
 // Alias for getVideoUrl - works for any file type (video, audio, etc.)
