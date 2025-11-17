@@ -33,8 +33,6 @@ export interface EditorState {
 const ProfessionalVideoEditor: React.FC<ProfessionalVideoEditorProps> = ({ project, videoFile: initialVideoFile, srtFile, onUpdateProject, onExit, onSwitchFile }) => {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isAnalyzingHardsubs, setIsAnalyzingHardsubs] = useState(false);
-  const [analysisProgress, setAnalysisProgress] = useState({ progress: 0, status: '' });
   const [isOverlayVisible, setIsOverlayVisible] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   
@@ -1273,8 +1271,6 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
                               videoFile={videoFile}
                               onUpdateProject={onUpdateProject}
                               onAnalyzeHardsubs={handleAnalyzeHardsubs}
-                              isAnalyzingHardsubs={isAnalyzingHardsubs}
-                              analysisProgress={analysisProgress}
                               onUpdateHardsubBox={handleUpdateHardsubBox}
                           />
                       )}

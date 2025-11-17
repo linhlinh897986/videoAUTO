@@ -106,8 +106,6 @@ export interface Project {
   skills?: ContextItem[];
   realms?: ContextItem[];
   subtitleStyle?: SubtitleStyle;
-  autoAnalyzeHardsubs?: boolean;
-  autoGenerateWaveform?: boolean;
   ttsVoice?: string;  // TTS voice ID for text-to-speech generation
 }
 
