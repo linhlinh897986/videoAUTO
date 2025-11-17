@@ -4,8 +4,6 @@ import { Project, SrtFile, CustomStyle, KeywordPair, Character, ApiKey, Subtitle
 import { parseSrt, composeSrt, formatForGemini } from '../../services/srtParser';
 import { batchTranslateFiles, countTokensInText } from '../../services/geminiService';
 import { saveVideo, deleteVideo, getVideoUrl, getStoredFileInfo, generateMissingSrtsFromAsr, importVideosFromFolder } from '../../services/projectService';
-import { preloadAudioBuffer } from '../../services/videoAnalysisService';
-import { analyzeHardcodedSubtitles } from '../../services/ocrService';
 import {
   UploadIcon, TrashIcon, TranslateIcon, DownloadIcon,
   LoadingSpinner, DownloadAllIcon, ClipboardIcon, FilmIcon, ClapperboardEditLinear, AudioWaveIcon, SubtitlesIcon
@@ -62,8 +60,32 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
-    const filesToProcess = Array.from(e.target.files);
+    const filesToProcess = Array.from(e.target.files) as File[];
     e.target.value = '';
+
+    // Check for large video files and warn user
+    const LARGE_VIDEO_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
+    const largeVideos = filesToProcess.filter(f => {
+      const fileNameLower = f.name.toLowerCase();
+      return (fileNameLower.endsWith('.mp4') || fileNameLower.endsWith('.mov') || 
+              fileNameLower.endsWith('.avi') || fileNameLower.endsWith('.mkv')) && 
+              f.size > LARGE_VIDEO_SIZE;
+    });
+
+    if (largeVideos.length > 0) {
+      const largeVideoNames = largeVideos.map(f => `${f.name} (${(f.size / (1024 * 1024 * 1024)).toFixed(2)} GB)`).join(', ');
+      const confirmUpload = window.confirm(
+        `Cảnh báo: Bạn đang tải lên video dung lượng lớn:\n\n${largeVideoNames}\n\n` +
+        `Video lớn có thể mất nhiều thời gian để:\n` +
+        `- Tải lên (vài phút đến vài chục phút)\n` +
+        `- Xử lý và phát (tốc độ tùy thiết bị)\n` +
+        `- Render (có thể mất vài giờ)\n\n` +
+        `Bạn có muốn tiếp tục không?`
+      );
+      if (!confirmUpload) {
+        return;
+      }
+    }
 
     const newSrtFiles: SrtFile[] = [];
     const newVideoFiles: { file: File, videoInfo: VideoFile }[] = [];
@@ -146,50 +168,40 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
     // Process videos
     for (const { file, videoInfo } of newVideoFiles) {
         try {
-            setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Đang lưu video...' }));
-            const uploadResult = await saveVideo(project.id, videoInfo.id, file);
+            // Show file size in the status for large files
+            const fileSizeMB = file.size / (1024 * 1024);
+            const sizeInfo = fileSizeMB > 100 ? ` (${fileSizeMB.toFixed(0)} MB)` : '';
+            
+            setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: `Đang lưu video${sizeInfo}... 0%` }));
+            
+            const uploadResult = await saveVideo(project.id, videoInfo.id, file, (progress) => {
+                // Update progress for large files
+                if (fileSizeMB > 100) {
+                    setProcessingStatus(prev => ({ 
+                        ...prev, 
+                        [videoInfo.id]: `Đang lưu video${sizeInfo}... ${Math.round(progress)}%` 
+                    }));
+                }
+            });
+            
             const videoUrl = await getVideoUrl(videoInfo.id);
 
             if (videoUrl) {
-                const waveformPromise = project.autoGenerateWaveform
-                    ? (async () => {
-                        setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Đang tạo waveform...' }));
-                        await preloadAudioBuffer(videoUrl);
-                      })()
-                    : Promise.resolve();
+                // Automatically set 8% hardsub cover at bottom (no OCR needed)
+                const autoHardsubBox = {
+                    x: 0,
+                    y: 92,  // Start at 92% from top (8% height at bottom)
+                    width: 100,
+                    height: 8,
+                    enabled: true
+                };
                 
-                const hardsubPromise = project.autoAnalyzeHardsubs
-                    ? (async () => {
-                        setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Đang phân tích hardsub...' }));
-                        try {
-                            const response = await analyzeHardcodedSubtitles(
-                                project.id,
-                                videoInfo.id,
-                                { numSamples: 20, language: 'chi_sim', maxWorkers: 8 }
-                            );
-                            
-                            if (response.status === 'error') {
-                                if (response.tesseract_error) {
-                                    setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi: Tesseract chưa được cài đặt' }));
-                                } else {
-                                    setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi phân tích hardsub' }));
-                                }
-                                return;
-                            }
-                            
-                            if (response.detected && response.bounding_box) {
-                                onUpdateProject(project.id, p => ({
-                                    files: p.files.map(f => f.id === videoInfo.id ? { ...f, hardsubCoverBox: response.bounding_box } : f)
-                                }));
-                            }
-                        } catch (error) {
-                            console.error('Error analyzing hardsubs:', error);
-                            setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi phân tích hardsub' }));
-                        }
-                      })()
-                    : Promise.resolve();
-
-                await Promise.all([waveformPromise, hardsubPromise]);
+                onUpdateProject(project.id, p => ({
+                    files: p.files.map(f => f.id === videoInfo.id ? { 
+                        ...f, 
+                        hardsubCoverBox: autoHardsubBox 
+                    } : f)
+                }));
             }
             if (uploadResult.path || uploadResult.size || uploadResult.created_at) {
                 onUpdateProject(project.id, p => ({

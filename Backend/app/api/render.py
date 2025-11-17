@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
-from app.core import DATA_ROOT, db
+from app.core import DATA_ROOT, db, RENDER_TIMEOUT_SECONDS
 
 
 # ASS format reference resolution for subtitle rendering
@@ -144,6 +144,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 @router.post("/projects/{project_id}/render")
 async def render_video(project_id: str, payload: VideoRenderRequest = Body(...)) -> Dict[str, Any]:
+    """
+    Render video with subtitles, audio tracks, and effects.
+    
+    Optimized for large videos:
+    - Uses temporary directory to avoid memory buildup
+    - Supports configurable timeout via RENDER_TIMEOUT_SECONDS
+    - FFmpeg processes video in streaming mode where possible
+    - Uses faststart for progressive download support
+    """
     project = db.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
@@ -168,6 +177,8 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
         temp_path = Path(temp_dir)
 
         input_video = temp_path / f"input{Path(filename).suffix}"
+        # Write video to temp file - this allows FFmpeg to stream read
+        # instead of loading entire file into memory
         input_video.write_bytes(video_data)
 
         subtitle_file = None
@@ -411,6 +422,9 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
         ffmpeg_cmd.extend(["-c:v", "libx264"])
         ffmpeg_cmd.extend(["-preset", "medium"])
         ffmpeg_cmd.extend(["-crf", "23"])
+        # Optimize for large video files with two-pass encoding hint
+        ffmpeg_cmd.extend(["-movflags", "+faststart"])  # Enable streaming/progressive download
+        ffmpeg_cmd.extend(["-max_muxing_queue_size", "1024"])  # Increase buffer for large files
         ffmpeg_cmd.extend(["-c:a", "aac", "-b:a", "192k"])
         ffmpeg_cmd.append(str(output_path))
 
@@ -434,7 +448,7 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
                 ffmpeg_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=600,
+                timeout=RENDER_TIMEOUT_SECONDS,
                 check=False,
             )
 
@@ -507,14 +521,14 @@ async def render_video(project_id: str, payload: VideoRenderRequest = Body(...))
             try:
                 with open(log_file_path, "a", encoding="utf-8") as log_file:
                     log_file.write("\n" + "=" * 80 + "\n")
-                    log_file.write("TIMEOUT: Process exceeded 10 minutes\n")
+                    log_file.write(f"TIMEOUT: Process exceeded {RENDER_TIMEOUT_SECONDS} seconds ({RENDER_TIMEOUT_SECONDS/60:.1f} minutes)\n")
                     log_file.write("=" * 80 + "\n")
             except Exception:
                 pass
 
             return {
                 "status": "error",
-                "message": "Rendering timeout (>10 minutes). Video may be too long or complex.",
+                "message": f"Rendering timeout (>{RENDER_TIMEOUT_SECONDS/60:.1f} minutes). Video may be too long or complex. Consider increasing RENDER_TIMEOUT_SECONDS environment variable.",
                 "ffmpeg_command": " ".join(ffmpeg_cmd),
                 "log_file": str(log_file_path),
                 "video_segments_count": len(payload.video_segments),

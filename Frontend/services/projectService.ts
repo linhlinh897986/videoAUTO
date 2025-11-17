@@ -71,35 +71,66 @@ export interface GenerateMissingSrtsResponse {
     errors: AsrGenerationItem[];
 }
 
-export const saveVideo = async (projectId: string, id: string, file: File): Promise<FileUploadResult> => {
+export const saveVideo = async (
+    projectId: string, 
+    id: string, 
+    file: File,
+    onProgress?: (progress: number) => void
+): Promise<FileUploadResult> => {
     const formData = new FormData();
     formData.append('file_id', id);
     formData.append('project_id', projectId);
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE_URL}/files`, {
-        method: 'POST',
-        body: formData,
-    });
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
 
-    if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || `Failed to upload file ${id}`);
-    }
-    try {
-        const payload = await response.json();
-        return {
-            path: payload?.path ?? undefined,
-            size: payload?.size ?? undefined,
-            created_at: payload?.created_at ?? undefined,
-        };
-    } catch (error) {
-        return {};
-    }
+        // Track upload progress
+        if (onProgress) {
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const percentComplete = (e.loaded / e.total) * 100;
+                    onProgress(percentComplete);
+                }
+            });
+        }
+
+        xhr.addEventListener('load', async () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const payload = JSON.parse(xhr.responseText);
+                    resolve({
+                        path: payload?.path ?? undefined,
+                        size: payload?.size ?? undefined,
+                        created_at: payload?.created_at ?? undefined,
+                    });
+                } catch (error) {
+                    resolve({});
+                }
+            } else {
+                reject(new Error(xhr.responseText || `Failed to upload file ${id}`));
+            }
+        });
+
+        xhr.addEventListener('error', () => {
+            reject(new Error(`Network error while uploading file ${id}`));
+        });
+
+        xhr.addEventListener('abort', () => {
+            reject(new Error(`Upload aborted for file ${id}`));
+        });
+
+        xhr.open('POST', `${API_BASE_URL}/files`);
+        xhr.send(formData);
+    });
 };
 
 export const getVideoUrl = async (id: string): Promise<string | null> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}`);
+    // Properly encode the file ID to handle special characters (Chinese, spaces, hashtags, etc.)
+    const encodedId = encodeURIComponent(id);
+    
+    // Check if file exists without downloading it
+    const response = await fetch(`${API_BASE_URL}/files/${encodedId}/info`);
     if (response.status === 404) {
         return null;
     }
@@ -109,15 +140,17 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
         throw new Error(message || `Failed to load file ${id}`);
     }
 
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    // Return direct URL for streaming - browser will handle Range requests automatically
+    return `${API_BASE_URL}/files/${encodedId}`;
 };
 
 // Alias for getVideoUrl - works for any file type (video, audio, etc.)
 export const getFileUrl = getVideoUrl;
 
 export const deleteVideo = async (id: string): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}`, { method: 'DELETE' });
+    // Properly encode the file ID to handle special characters
+    const encodedId = encodeURIComponent(id);
+    const response = await fetch(`${API_BASE_URL}/files/${encodedId}`, { method: 'DELETE' });
     if (!response.ok && response.status !== 404) {
         const message = await response.text();
         throw new Error(message || `Failed to delete file ${id}`);
@@ -125,7 +158,9 @@ export const deleteVideo = async (id: string): Promise<void> => {
 };
 
 export const getStoredFileInfo = async (id: string): Promise<StoredFileMetadata | null> => {
-    const response = await fetch(`${API_BASE_URL}/files/${id}/info`);
+    // Properly encode the file ID to handle special characters
+    const encodedId = encodeURIComponent(id);
+    const response = await fetch(`${API_BASE_URL}/files/${encodedId}/info`);
     if (response.status === 404) {
         return null;
     }

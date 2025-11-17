@@ -553,6 +553,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     onPlay={handlePlay}
                     onPause={handlePause}
                     playsInline
+                    preload="auto"
+                    crossOrigin="anonymous"
                     style={{ display: 'none' }}
                 />
 
