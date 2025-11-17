@@ -11,7 +11,6 @@ import EditorControls from '../editor/EditorControls';
 import { useHistoryState } from '../../hooks/useHistoryState';
 import { generateBatchTTS } from '../../services/ttsService';
 import { DEFAULT_TTS_VOICE } from '../../constants';
-import { analyzeHardcodedSubtitles } from '../../services/ocrService';
 
 
 interface ProfessionalVideoEditorProps {
@@ -988,66 +987,20 @@ const handleMarqueeSelect = (segmentIds: string[], subtitleIds: number[], audioI
 };
 
     const handleAnalyzeHardsubs = async () => {
-        setIsAnalyzingHardsubs(true);
-        setAnalysisProgress({ progress: 0, status: 'Đang gửi yêu cầu phân tích đến server...' });
-
-        try {
-            setAnalysisProgress({ progress: 0.3, status: 'Đang phân tích video bằng OCR...' });
-            
-            const response = await analyzeHardcodedSubtitles(
-                project.id,
-                initialVideoFile.id,
-                {
-                    numSamples: 3,
-                    language: 'chi_sim',
-                    maxWorkers: 8,  // Use 8 parallel workers for faster processing
-                }
-            );
-
-            setAnalysisProgress({ progress: 1, status: 'Hoàn thành!' });
-
-            if (response.status === 'error') {
-                if (response.tesseract_error) {
-                    alert(`Lỗi cấu hình Tesseract OCR:\n\n${response.message}\n\nVui lòng cài đặt Tesseract và dữ liệu ngôn ngữ trên server:\nsudo apt-get install tesseract-ocr tesseract-ocr-chi-sim`);
-                } else {
-                    alert(`Lỗi khi phân tích: ${response.message}`);
-                }
-                return;
-            }
-
-            if (response.detected && response.bounding_box) {
-                const newCoverBox: BoundingBox = {
-                    x: response.bounding_box.x,
-                    y: response.bounding_box.y,
-                    width: response.bounding_box.width,
-                    height: response.bounding_box.height,
-                    enabled: response.bounding_box.enabled,
-                };
-                
-                const updateFn = (prevState: EditorState) => ({...prevState, hardsubCoverBox: newCoverBox });
-                setLiveEditorState(updateFn);
-                setEditorState(updateFn);
-                
-                let message = `Đã phát hiện và tạo vùng che hardsub! (Đã quét ${response.frames_analyzed} khung hình)`;
-                if (response.failed_frames && response.failed_frames > 0) {
-                    message += `\n\nLưu ý: ${response.failed_frames} khung hình bị lỗi OCR`;
-                }
-                alert(message);
-            } else {
-                let message = "Không phát hiện thấy hardsub ở cuối video.";
-                if (response.failed_frames && response.failed_frames > 0) {
-                    message += `\n\nLưu ý: ${response.failed_frames}/${response.frames_analyzed} khung hình bị lỗi OCR`;
-                }
-                alert(message);
-            }
-
-        } catch (error) {
-            console.error("Lỗi khi phân tích hardsub:", error);
-            alert(`Đã xảy ra lỗi: ${error}`);
-        } finally {
-            setIsAnalyzingHardsubs(false);
-            setAnalysisProgress({ progress: 0, status: '' });
-        }
+        // Automatically set 8% hardsub cover at bottom (no OCR analysis)
+        const autoHardsubBox: BoundingBox = {
+            x: 0,
+            y: 92,  // Start at 92% from top (8% height at bottom)
+            width: 100,
+            height: 8,
+            enabled: true
+        };
+        
+        const updateFn = (prevState: EditorState) => ({...prevState, hardsubCoverBox: autoHardsubBox });
+        setLiveEditorState(updateFn);
+        setEditorState(updateFn);
+        
+        alert('Đã tạo lớp phủ tự động 8% ở cuối video!');
     };
     
     const handleUpdateHardsubBox = (box: BoundingBox) => {

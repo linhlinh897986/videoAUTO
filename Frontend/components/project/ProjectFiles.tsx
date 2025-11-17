@@ -4,8 +4,6 @@ import { Project, SrtFile, CustomStyle, KeywordPair, Character, ApiKey, Subtitle
 import { parseSrt, composeSrt, formatForGemini } from '../../services/srtParser';
 import { batchTranslateFiles, countTokensInText } from '../../services/geminiService';
 import { saveVideo, deleteVideo, getVideoUrl, getStoredFileInfo, generateMissingSrtsFromAsr, importVideosFromFolder } from '../../services/projectService';
-import { preloadAudioBuffer } from '../../services/videoAnalysisService';
-import { analyzeHardcodedSubtitles } from '../../services/ocrService';
 import {
   UploadIcon, TrashIcon, TranslateIcon, DownloadIcon,
   LoadingSpinner, DownloadAllIcon, ClipboardIcon, FilmIcon, ClapperboardEditLinear, AudioWaveIcon, SubtitlesIcon
@@ -189,45 +187,21 @@ const ProjectFiles: React.FC<ProjectFilesProps> = ({ project, onUpdateProject, o
             const videoUrl = await getVideoUrl(videoInfo.id);
 
             if (videoUrl) {
-                const waveformPromise = project.autoGenerateWaveform
-                    ? (async () => {
-                        setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Đang tạo waveform...' }));
-                        await preloadAudioBuffer(videoUrl);
-                      })()
-                    : Promise.resolve();
+                // Automatically set 8% hardsub cover at bottom (no OCR needed)
+                const autoHardsubBox = {
+                    x: 0,
+                    y: 92,  // Start at 92% from top (8% height at bottom)
+                    width: 100,
+                    height: 8,
+                    enabled: true
+                };
                 
-                const hardsubPromise = project.autoAnalyzeHardsubs
-                    ? (async () => {
-                        setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Đang phân tích hardsub...' }));
-                        try {
-                            const response = await analyzeHardcodedSubtitles(
-                                project.id,
-                                videoInfo.id,
-                                { numSamples: 3, language: 'chi_sim', maxWorkers: 8 }
-                            );
-                            
-                            if (response.status === 'error') {
-                                if (response.tesseract_error) {
-                                    setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi: Tesseract chưa được cài đặt' }));
-                                } else {
-                                    setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi phân tích hardsub' }));
-                                }
-                                return;
-                            }
-                            
-                            if (response.detected && response.bounding_box) {
-                                onUpdateProject(project.id, p => ({
-                                    files: p.files.map(f => f.id === videoInfo.id ? { ...f, hardsubCoverBox: response.bounding_box } : f)
-                                }));
-                            }
-                        } catch (error) {
-                            console.error('Error analyzing hardsubs:', error);
-                            setProcessingStatus(prev => ({ ...prev, [videoInfo.id]: 'Lỗi phân tích hardsub' }));
-                        }
-                      })()
-                    : Promise.resolve();
-
-                await Promise.all([waveformPromise, hardsubPromise]);
+                onUpdateProject(project.id, p => ({
+                    files: p.files.map(f => f.id === videoInfo.id ? { 
+                        ...f, 
+                        hardsubCoverBox: autoHardsubBox 
+                    } : f)
+                }));
             }
             if (uploadResult.path || uploadResult.size || uploadResult.created_at) {
                 onUpdateProject(project.id, p => ({

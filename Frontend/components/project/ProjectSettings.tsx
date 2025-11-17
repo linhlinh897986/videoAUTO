@@ -96,27 +96,12 @@ const ProjectSettings: React.FC<ProjectSettingsProps> = ({
       <CollapsibleSection title="Tự động hóa & Hiệu suất">
          <div className="space-y-8">
             <div>
-              <h4 className="text-lg font-semibold mb-2 text-gray-200">Tác vụ Tự động khi Tải lên Video</h4>
-              <p className="text-gray-400 mb-4">Tự động chạy các tác vụ tốn thời gian ngay sau khi video được tải lên để chuẩn bị cho việc chỉnh sửa.</p>
-              <div className="space-y-3">
-                 <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-md hover:bg-gray-800/50">
-                    <input
-                        type="checkbox"
-                        checked={project.autoAnalyzeHardsubs ?? true}
-                        onChange={e => onUpdateProject(project.id, { autoAnalyzeHardsubs: e.target.checked })}
-                        className="form-checkbox bg-gray-700 border-gray-600 text-indigo-500 h-5 w-5 rounded focus:ring-indigo-500"
-                    />
-                    <span className="text-gray-300">Tự động phân tích hardsub khi tải lên</span>
-                 </label>
-                 <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-md hover:bg-gray-800/50">
-                    <input
-                        type="checkbox"
-                        checked={project.autoGenerateWaveform ?? true}
-                        onChange={e => onUpdateProject(project.id, { autoGenerateWaveform: e.target.checked })}
-                        className="form-checkbox bg-gray-700 border-gray-600 text-indigo-500 h-5 w-5 rounded focus:ring-indigo-500"
-                    />
-                    <span className="text-gray-300">Tự động tạo waveform khi tải lên</span>
-                 </label>
+              <h4 className="text-lg font-semibold mb-2 text-gray-200">Lớp Phủ Hardsub Tự Động</h4>
+              <p className="text-gray-400 mb-4">Video sẽ tự động có lớp phủ 8% ở dưới cùng để che phụ đề gốc khi tải lên.</p>
+              <div className="text-sm text-gray-500 p-3 bg-gray-800/50 rounded-md">
+                <p>✓ Lớp phủ tự động: 8% chiều cao ở đáy video</p>
+                <p>✓ Không cần OCR hay phân tích</p>
+                <p>✓ Tải lên nhanh hơn</p>
               </div>
             </div>
             <div>
