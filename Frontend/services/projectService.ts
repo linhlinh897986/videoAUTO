@@ -128,7 +128,9 @@ export const saveVideo = async (
 export const getVideoUrl = async (id: string): Promise<string | null> => {
     // Properly encode the file ID to handle special characters (Chinese, spaces, hashtags, etc.)
     const encodedId = encodeURIComponent(id);
-    const response = await fetch(`${API_BASE_URL}/files/${encodedId}`);
+    
+    // Check if file exists without downloading it
+    const response = await fetch(`${API_BASE_URL}/files/${encodedId}/info`);
     if (response.status === 404) {
         return null;
     }
@@ -138,8 +140,8 @@ export const getVideoUrl = async (id: string): Promise<string | null> => {
         throw new Error(message || `Failed to load file ${id}`);
     }
 
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    // Return direct URL for streaming - browser will handle Range requests automatically
+    return `${API_BASE_URL}/files/${encodedId}`;
 };
 
 // Alias for getVideoUrl - works for any file type (video, audio, etc.)
