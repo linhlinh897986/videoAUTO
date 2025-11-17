@@ -80,6 +80,7 @@ def download_file(file_id: str, request: Request) -> Response:
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(len(chunk)),
                 "Content-Type": media_type,
+                "Cache-Control": "public, max-age=3600",  # Cache for 1 hour
             }
             
             return Response(content=chunk, status_code=206, headers=headers, media_type=media_type)
@@ -109,6 +110,7 @@ def download_file(file_id: str, request: Request) -> Response:
     if is_video:
         headers["Accept-Ranges"] = "bytes"
         headers["Content-Length"] = str(len(data))
+        headers["Cache-Control"] = "public, max-age=3600"  # Cache for 1 hour
     
     return Response(content=data, media_type=media_type, headers=headers)
 
